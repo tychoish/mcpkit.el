@@ -29,7 +29,7 @@ jobs:
           emacs --batch \
             -L . \
             --eval '(progn
-              (require "package")
+              (require (quote package))
               (setq package-archives (quote (("gnu" . "https://elpa.gnu.org/packages/")
                                              ("melpa" . "https://melpa.org/packages/")
                                              ("elpaish" . "https://tychoish.github.io/elpaish/snapshot/"))))
