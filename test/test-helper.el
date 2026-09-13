@@ -1,0 +1,86 @@
+;;; test-helper.el --- ERT test infrastructure -*- lexical-binding: t; no-byte-compile: t; -*-
+
+;;; Commentary:
+;; Loaded by ert-runner before any test files.
+;; Adds lisp/ and elpa/* to load-path so test files can require local modules.
+
+;;; Code:
+
+(defvar test-helper-root nil
+  "Repository root directory, set once `test-helper' loads.")
+
+(let* ((test-file (or load-file-name buffer-file-name))
+       (test-dir (file-name-directory test-file))
+       (root (file-name-directory (directory-file-name test-dir))))
+  (setq test-helper-root root)
+  (add-to-list 'load-path root)
+  (when (file-directory-p (expand-file-name "lisp" root))
+    (add-to-list 'load-path (expand-file-name "lisp" root)))
+  (when (file-directory-p (expand-file-name "elpa" root))
+    (dolist (dir (directory-files (expand-file-name "elpa" root) t "\\`[^.]"))
+      (when (file-directory-p dir)
+        (add-to-list 'load-path dir)))))
+
+;;; Code coverage (undercover.el)
+;;
+;; Set EMACS_COVERAGE=1 (or UNDERCOVER_FORCE, which undercover.el also
+;; honors) before running the batch test runner to instrument lisp/*.el
+;; and write an lcov report that `cov-mode' can render as overlays.
+
+(when (or (getenv "EMACS_COVERAGE") (getenv "UNDERCOVER_FORCE"))
+  (require 'undercover)
+  (undercover "lisp/*.el"
+              (:report-format 'lcov)
+              (:report-file (expand-file-name "coverage/lcov.info" test-helper-root))
+              (:send-report nil)))
+
+;;; Transient key introspection helpers
+
+(defun transient-test/collect-keys (prefix-sym)
+  "Return a list of all :key strings in PREFIX-SYM's transient layout.
+Uses an iterative walk so no recursion limit applies."
+  (let ((queue (list (get prefix-sym 'transient--layout)))
+        keys)
+    (while queue
+      (let ((node (pop queue)))
+        (cond
+          ((and (vectorp node) (not (byte-code-function-p node)))
+           (setq queue (append (seq-into node 'list) queue)))
+          ((and (consp node) (eq (car node) 'transient-suffix))
+           (when-let* ((key (plist-get (cdr node) :key)))
+             (push key keys)))
+          ((consp node)
+           (setq queue (append node queue))))))
+    (nreverse keys)))
+
+(defun transient-test/key-sequence-prefix-p (short long)
+  "Return non-nil if SHORT key string is a strict prefix of LONG as a key sequence.
+Uses `kbd' to parse both strings so modifier chords like \"C-r\" (a single
+key event) are never confused with multi-character sequences like \"dv\"."
+  (when (not (equal short long))
+    (let ((sv (kbd short))
+          (lv (kbd long)))
+      (and (< (length sv) (length lv))
+           (equal sv (substring lv 0 (length sv)))))))
+
+(defun transient-test/key-prefix-conflicts (keys)
+  "Return a list of (SHORT LONG) pairs where SHORT is a strict prefix of LONG in KEYS."
+  (let (conflicts)
+    (dolist (short keys)
+      (dolist (long keys)
+        (when (transient-test/key-sequence-prefix-p short long)
+          (push (list short long) conflicts))))
+    conflicts))
+
+(defun transient-test/duplicate-keys (keys)
+  "Return a list of keys that appear more than once in KEYS."
+  (let (seen dups)
+    (dolist (k keys)
+      (if (member k seen)
+          (unless (member k dups)
+            (push k dups))
+        (push k seen)))
+    dups))
+
+(provide 'test-helper)
+;;; test-helper.el ends here
