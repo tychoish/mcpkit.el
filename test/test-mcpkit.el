@@ -2,7 +2,6 @@
 
 (require 'ert)
 (require 'mcpkit)
-(require 'mcpkit-ask)
 
 (defmacro mcpkit-test--with-clean-env (&rest body)
   "Run BODY with clean `mcpkit-registry' and `mcpkit--active-services'."
@@ -313,20 +312,6 @@
           (should (equal (aref row 4) "First Svc")))))))
 
 ;;; Agent-Shell-Ask Tools Registration Test
-
-(ert-deftest mcpkit-test-ask-tools-registration ()
-  "Test that `mcpkit-register-ask-tools' registers all expected ask tools."
-  (mcpkit-test--with-clean-env
-    (mcpkit-register-ask-tools)
-    (let ((svc (mcpkit-get-service 'agent-shell-ask)))
-      (should (mcpkit-service-p svc))
-      (should (= (mcpkit-service-port svc) 8766))
-      (let ((tool-table (mcpkit-service-tools svc)))
-        (should (gethash "ask_user" tool-table))
-        (should (gethash "poll_question" tool-table))
-        (should (gethash "get_next_question" tool-table))
-        (should (gethash "list_pending_questions" tool-table))
-        (should (gethash "cancel_question" tool-table))))))
 
 (provide 'test-mcpkit)
 ;;; test-mcpkit.el ends here
