@@ -251,6 +251,24 @@ In this buffer, you can use:
 - ~k~: Stop the service at point.
 - ~g~: Refresh the service list.
 
+** Core Emacs Service (mcpkit-emacs)
+:PROPERTIES:
+:CUSTOM_ID: core-emacs-service-mcpkit-emacs
+:END:
+
+The bundled ~mcpkit-emacs~ module exposes core GNU Emacs management, buffer inspection,
+and safe evaluation to AI agents:
+
+#+BEGIN_SRC emacs-lisp
+(require 'mcpkit-emacs)
+(mcpkit-start-service 'emacs :port 8765)
+#+END_SRC
+
+Exposed MCP tools:
+- ~emacs_server_status~: Return Emacs process status, versions, uptime, and active mcpkit services.
+- ~emacs_get_buffer~: Inspect buffer metadata and contents by name or visited file path.
+- ~emacs_eval~: Safely evaluate an Emacs Lisp expression string with prompt suppression.
+
 * API Reference
 :PROPERTIES:
 :CUSTOM_ID: api-reference
