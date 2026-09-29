@@ -537,6 +537,17 @@ If no active services remain, close the underlying `ws-server' socket."
         (setq mcpkit--active-server nil)))
     svc))
 
+;;;###autoload
+(defun mcpkit-active-port ()
+  "Return the port the shared MCP server is listening on, or nil if not running.
+
+Callers never choose the port directly (see `mcpkit-start-service'); this is
+the way to discover it after the fact, e.g. for external bootstrapping via
+`emacsclient --eval \"(mcpkit-active-port)\"'."
+  (interactive)
+  (and mcpkit--active-server
+       (plist-get (process-contact (ws-process mcpkit--active-server) t) :service)))
+
 ;;; Autostart
 
 (defvar mcpkit-autostart-alist nil
