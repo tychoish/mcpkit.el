@@ -26,6 +26,11 @@
 (require 'projectile nil t)
 (require 'mcpkit)
 
+(declare-function projectile-project-root "projectile" (&optional dir))
+(declare-function projectile-project-files "projectile" (project-root))
+(declare-function projectile-save-project-buffers "projectile" (&optional arg))
+(declare-function org-element-cache-reset "org-element" (&optional all))
+
 (defgroup mcpkit-emacs nil
   "Emacs Core MCP service integration for mcpkit."
   :group 'mcpkit
