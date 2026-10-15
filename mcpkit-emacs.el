@@ -36,19 +36,15 @@
   :group 'mcpkit
   :prefix "mcpkit-emacs-")
 
-(defcustom mcpkit-emacs-port 8765
-  "Default TCP port for the Emacs MCP service."
-  :type 'integer
-  :group 'mcpkit-emacs)
-
 ;;; Service Definition & Top-Level Tool Registration
 
 (defvar mcpkit-emacs-service
   (or (mcpkit-get-service 'emacs)
       (mcpkit-define-service 'emacs
-        :port mcpkit-emacs-port
         :description "GNU Emacs Core Management and Inspection"))
   "The Emacs `mcpkit-service' instance.")
+
+(mcpkit-register-autostart 'emacs :on-collision 'namespace)
 
 ;; 1. emacs_server_status
 (mcpkit-register-tool 'emacs_server_status 'emacs
