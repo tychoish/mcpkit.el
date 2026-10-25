@@ -545,8 +545,11 @@ Callers never choose the port directly (see `mcpkit-start-service'); this is
 the way to discover it after the fact, e.g. for external bootstrapping via
 `emacsclient --eval \"(mcpkit-active-port)\"'."
   (interactive)
-  (and mcpkit--active-server
-       (plist-get (process-contact (ws-process mcpkit--active-server) t) :service)))
+  (when mcpkit--active-server
+    (let ((proc (ignore-errors (ws-process mcpkit--active-server))))
+      (if (processp proc)
+          (plist-get (process-contact proc t) :service)
+        (ignore-errors (ws-port mcpkit--active-server))))))
 
 ;;; Autostart
 
