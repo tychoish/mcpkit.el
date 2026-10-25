@@ -743,7 +743,8 @@ on a different port, it is stopped first so it can restart cleanly on the new po
            (read-number "Start MCP server on port (0 for free OS port): " 0))))
   (if modules-p
       (mcpkit-load-all-services modules)
-    (mcpkit-load-all-services))
+    (unless (and (boundp 'mcpkit-registry) mcpkit-registry)
+      (mcpkit-load-all-services)))
   (let* ((target-port (cond
                        ((or (eq port 'free) (eq port t) (equal port 0))
                         (mcpkit-allocate-free-port))
