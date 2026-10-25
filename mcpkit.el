@@ -509,7 +509,7 @@ ON-COLLISION specifies how tool name collisions are handled:
            (mcpkit-service-tools svc))))
       (push (cons svc on-collision) mcpkit--active-services))
     (unless mcpkit--active-server
-      (let* ((listen-port (or port (mcpkit-service-port svc) 8765))
+      (let* ((listen-port (or port (mcpkit-service-port svc) (and (boundp 'mcpkit-default-port) mcpkit-default-port) 8765))
              (log-buf (or (mcpkit-service-log-buffer-name svc) "*mcpkit-server*"))
              (srv (ws-start (list (cons (lambda (_req) t) #'mcpkit--handle-request))
                             listen-port
@@ -613,7 +613,11 @@ non-nil. Runs at most once per Emacs session; safe to call more than once."
      (let* ((name-sym (car entry))
             (svc (cdr entry))
             (status-str (if (mcpkit--service-active-p svc) "active" "inactive"))
-            (port-str (number-to-string (mcpkit-service-port svc)))
+            (port-str (if (mcpkit--service-active-p svc)
+                        (number-to-string (or (mcpkit-active-port) 0))
+                      (if (mcpkit-service-port svc)
+                          (number-to-string (mcpkit-service-port svc))
+                        "-")))
             (tools-str (number-to-string (hash-table-count (mcpkit-service-tools svc))))
             (desc (or (mcpkit-service-description svc) "")))
        (list name-sym
@@ -791,38 +795,11 @@ on a different port, it is stopped first so it can restart cleanly on the new po
 
 ;;;###autoload
 (defun mcpkit-services-status ()
-  "Display the current status of all MCPKit services and active port."
+  "Display the status of all registered MCP services in a tabulated list.
+Convenience command that loads all services and invokes `mcpkit-list-services'."
   (interactive)
   (mcpkit-load-all-services)
-  (let* ((port (ignore-errors (mcpkit-active-port)))
-         (active-names (mapcar (lambda (e) (mcpkit-service-name (car e)))
-                               (and (boundp 'mcpkit--active-services) mcpkit--active-services)))
-         (all-services (and (boundp 'mcpkit-registry) mcpkit-registry)))
-    (with-output-to-temp-buffer "*mcpkit-status*"
-      (princ (format "MCPKit Server Status
-====================
-"))
-      (princ (format "Server Listening: %s
-" (if port (format "Yes (Port %d)" port) "No (Stopped)")))
-      (princ (format "Default Port:     %s
-
-" mcpkit-default-port))
-      (princ (format "%-12s %-8s %-6s %s
-" "SERVICE" "STATUS" "TOOLS" "DESCRIPTION"))
-      (princ (format "%-12s %-8s %-6s %s
-" "-------" "------" "-----" "-----------"))
-      (dolist (entry all-services)
-        (let* ((name (car entry))
-               (svc (cdr entry))
-               (active-p (memq name active-names))
-               (tool-count (hash-table-count (mcpkit-service-tools svc)))
-               (desc (mcpkit-service-description svc)))
-          (princ (format "%-12s %-8s %-6d %s
-"
-                         name
-                         (if active-p "ACTIVE" "idle")
-                         tool-count
-                         (or desc ""))))))))
+  (mcpkit-list-services))
 
 (provide 'mcpkit)
 ;;; mcpkit.el ends here
