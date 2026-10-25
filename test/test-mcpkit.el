@@ -313,5 +313,33 @@
 
 ;;; Agent-Shell-Ask Tools Registration Test
 
+
+;;; Lifecycle & Multi-Service Tests
+
+(ert-deftest mcpkit-test-lifecycle-management ()
+  "Test multi-service load, start, free-port migration, and teardown."
+  (mcpkit-test--with-clean-env
+    (let ((port (mcpkit-allocate-free-port)))
+      (should (integerp port))
+      (should (> port 1024)))
+    (let ((svc1 (mcpkit-define-service 'svc-a :description "Service A"))
+          (svc2 (mcpkit-define-service 'svc-b :description "Service B")))
+      (mcpkit-register-tool t1 svc1 "T1" "res1")
+      (mcpkit-register-tool t2 svc2 "T2" "res2")
+      ;; Start on free port without requiring external modules
+      (let ((p1 (mcpkit-start-all-services 'free :modules nil)))
+        (should (integerp p1))
+        (should (equal (mcpkit-active-port) p1))
+        (should (= (length mcpkit--active-services) 2))
+        ;; Restart on a new free port
+        (let ((p2 (mcpkit-restart-all-services 'free :modules nil)))
+          (should (integerp p2))
+          (should (equal (mcpkit-active-port) p2))
+          (should (= (length mcpkit--active-services) 2)))
+        ;; Teardown
+        (should (mcpkit-stop-all-services))
+        (should-not (mcpkit-active-port))
+        (should-not mcpkit--active-services)))))
+
 (provide 'test-mcpkit)
 ;;; test-mcpkit.el ends here

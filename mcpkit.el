@@ -686,5 +686,143 @@ non-nil. Runs at most once per Emacs session; safe to call more than once."
     (display-buffer buf)
     buf))
 
+
+;;; Lifecycle & Multi-Service Management
+
+(defcustom mcpkit-default-port 8765
+  "Default port for mcpkit HTTP server.
+Can be set to an integer port number, or `free'/`t'/`0' to dynamically
+allocate an unused port from the operating system."
+  :type '(choice (integer :tag "Port number")
+                 (const :tag "Dynamically allocate free port" free))
+  :group 'mcpkit)
+
+(defcustom mcpkit-service-modules
+  '(mcpkit-emacs mcpkit-editing denote-mcp agent-shell-queue-mcp builder-mcp hitl-mcp)
+  "List of MCP service modules to require when loading all services."
+  :type '(repeat symbol)
+  :group 'mcpkit)
+
+;;;###autoload
+(defun mcpkit-allocate-free-port ()
+  "Return a free local TCP port allocated by the operating system."
+  (let ((proc (make-network-process :name " mcpkit-port-probe"
+                                    :server t :host 'local
+                                    :service t :noquery t
+                                    :family 'ipv4)))
+    (unwind-protect
+        (process-contact proc :service)
+      (delete-process proc))))
+
+;;;###autoload
+(cl-defun mcpkit-load-all-services (&optional (modules mcpkit-service-modules modules-p))
+  "Load all MCP service MODULES and register their tools.
+MODULES defaults to `mcpkit-service-modules'. Does NOT modify `load-path'."
+  (interactive)
+  (let ((mods (if modules-p modules mcpkit-service-modules)))
+    (dolist (mod mods)
+      (require mod nil t)))
+  (when (and (fboundp 'mcpkit-editing-register-tools)
+             (fboundp 'mcpkit-get-service)
+             (mcpkit-get-service 'emacs))
+    (mcpkit-editing-register-tools 'emacs))
+  (mapcar #'car (and (boundp 'mcpkit-registry) mcpkit-registry)))
+
+;;;###autoload
+(cl-defun mcpkit-start-all-services (&optional port &key (on-collision 'namespace) (modules mcpkit-service-modules modules-p))
+  "Start all registered MCP services on PORT under ON-COLLISION policy.
+Loads MODULES (defaulting to `mcpkit-service-modules') first.
+PORT defaults to `mcpkit-default-port'. If PORT is `\='free', `0', or `t',
+a fresh free port is dynamically allocated. If the server is already active
+on a different port, it is stopped first so it can restart cleanly on the new port."
+  (interactive
+   (list (when current-prefix-arg
+           (read-number "Start MCP server on port (0 for free OS port): " 0))))
+  (if modules-p
+      (mcpkit-load-all-services modules)
+    (mcpkit-load-all-services))
+  (let* ((target-port (cond
+                       ((or (eq port 'free) (eq port t) (equal port 0))
+                        (mcpkit-allocate-free-port))
+                       ((and (null port) (memq mcpkit-default-port '(free t 0)))
+                        (mcpkit-allocate-free-port))
+                       ((numberp port) port)
+                       (t (or mcpkit-default-port 8765))))
+         (current-port (ignore-errors (mcpkit-active-port))))
+    (when (and current-port (not (= current-port target-port)))
+      (message "mcpkit: migrating server from port %d to %d" current-port target-port)
+      (mcpkit-stop-all-services))
+    (dolist (svc-entry (and (boundp 'mcpkit-registry) mcpkit-registry))
+      (let ((svc-name (car svc-entry)))
+        (ignore-errors
+          (mcpkit-start-service svc-name :port target-port :on-collision on-collision))))
+    (let ((active (mcpkit-active-port)))
+      (message "mcpkit: active on port %s with %d services"
+               active (length (and (boundp 'mcpkit--active-services) mcpkit--active-services)))
+      active)))
+
+;;;###autoload
+(defun mcpkit-stop-all-services ()
+  "Conversely stop all active MCP services and shut down the HTTP server."
+  (interactive)
+  (when (boundp 'mcpkit--active-services)
+    (let ((active (copy-sequence mcpkit--active-services)))
+      (dolist (entry active)
+        (let ((svc (car entry)))
+          (when svc
+            (mcpkit-stop-service (mcpkit-service-name svc))))))
+    (when (and (boundp 'mcpkit--active-server) mcpkit--active-server)
+      (ignore-errors (ws-stop mcpkit--active-server))
+      (setq mcpkit--active-server nil))
+    (setq mcpkit--active-services nil)
+    (message "mcpkit: all services stopped and server shutdown")
+    t))
+
+;;;###autoload
+(cl-defun mcpkit-restart-all-services (&optional port &key (modules mcpkit-service-modules modules-p))
+  "Restart all MCP services, optionally migrating to a new/free PORT."
+  (interactive
+   (list (when current-prefix-arg
+           (read-number "Restart MCP server on port (0 for free OS port): " 0))))
+  (mcpkit-stop-all-services)
+  (if modules-p
+      (mcpkit-start-all-services port :modules modules)
+    (mcpkit-start-all-services port)))
+
+;;;###autoload
+(defun mcpkit-services-status ()
+  "Display the current status of all MCPKit services and active port."
+  (interactive)
+  (mcpkit-load-all-services)
+  (let* ((port (ignore-errors (mcpkit-active-port)))
+         (active-names (mapcar (lambda (e) (mcpkit-service-name (car e)))
+                               (and (boundp 'mcpkit--active-services) mcpkit--active-services)))
+         (all-services (and (boundp 'mcpkit-registry) mcpkit-registry)))
+    (with-output-to-temp-buffer "*mcpkit-status*"
+      (princ (format "MCPKit Server Status
+====================
+"))
+      (princ (format "Server Listening: %s
+" (if port (format "Yes (Port %d)" port) "No (Stopped)")))
+      (princ (format "Default Port:     %s
+
+" mcpkit-default-port))
+      (princ (format "%-12s %-8s %-6s %s
+" "SERVICE" "STATUS" "TOOLS" "DESCRIPTION"))
+      (princ (format "%-12s %-8s %-6s %s
+" "-------" "------" "-----" "-----------"))
+      (dolist (entry all-services)
+        (let* ((name (car entry))
+               (svc (cdr entry))
+               (active-p (memq name active-names))
+               (tool-count (hash-table-count (mcpkit-service-tools svc)))
+               (desc (mcpkit-service-description svc)))
+          (princ (format "%-12s %-8s %-6d %s
+"
+                         name
+                         (if active-p "ACTIVE" "idle")
+                         tool-count
+                         (or desc ""))))))))
+
 (provide 'mcpkit)
 ;;; mcpkit.el ends here
