@@ -736,7 +736,8 @@ MODULES defaults to `mcpkit-service-modules'. Does NOT modify `load-path'."
 Loads MODULES (defaulting to `mcpkit-service-modules') first.
 PORT defaults to `mcpkit-default-port'. If PORT is `\='free', `0', or `t',
 a fresh free port is dynamically allocated. If the server is already active
-on a different port, it is stopped first so it can restart cleanly on the new port."
+on a different port, it is stopped first so it can restart cleanly on the
+new port."
   (interactive
    (list (when current-prefix-arg
            (read-number "Start MCP server on port (0 for free OS port): " 0))))
