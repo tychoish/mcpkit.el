@@ -666,8 +666,7 @@ non-nil. Runs at most once per Emacs session; safe to call more than once."
   (interactive)
   (when-let* ((id (tabulated-list-get-id)))
     (mcpkit-start-service id)
-    (mcpkit-service-list-refresh)
-    (message "[mcpkit]: started service `%s'" id)))
+    (mcpkit-service-list-refresh)))
 
 ;;;###autoload
 (defun mcpkit-service-list-stop-at-point ()
@@ -675,8 +674,7 @@ non-nil. Runs at most once per Emacs session; safe to call more than once."
   (interactive)
   (when-let* ((id (tabulated-list-get-id)))
     (mcpkit-stop-service id)
-    (mcpkit-service-list-refresh)
-    (message "[mcpkit]: stopped service `%s'" id)))
+    (mcpkit-service-list-refresh)))
 
 ;;;###autoload
 (defun mcpkit-list-services ()
@@ -725,16 +723,13 @@ MODULES defaults to `mcpkit-service-modules'. Does NOT modify `load-path'."
   (interactive)
   (let ((mods (if modules-p modules mcpkit-service-modules)))
     (dolist (mod mods)
-      (require mod nil t)))
+      (when (require mod nil t)
+        (message "[mcpkit]: registered %s" mod))))
   (when (and (fboundp 'mcpkit-editing-register-tools)
              (fboundp 'mcpkit-get-service)
              (mcpkit-get-service 'emacs))
     (mcpkit-editing-register-tools 'emacs))
-  (let ((registered (mapcar #'car (and (boundp 'mcpkit-registry) mcpkit-registry))))
-    (message "[mcpkit]: registered %d services (%s)"
-             (length registered)
-             (mapconcat #'symbol-name registered ", "))
-    registered))
+  (mapcar #'car (and (boundp 'mcpkit-registry) mcpkit-registry)))
 
 ;;;###autoload
 (cl-defun mcpkit-start-all-services (&optional port &key (on-collision 'namespace) (modules mcpkit-service-modules modules-p))
@@ -758,7 +753,6 @@ on a different port, it is stopped first so it can restart cleanly on the new po
                        (t (or mcpkit-default-port 8765))))
          (current-port (ignore-errors (mcpkit-active-port))))
     (when (and current-port (not (= current-port target-port)))
-      (message "[mcpkit]: migrating server from port %d to %d" current-port target-port)
       (mcpkit-stop-all-services))
     (dolist (svc-entry (and (boundp 'mcpkit-registry) mcpkit-registry))
       (let ((svc-name (car svc-entry)))
@@ -783,7 +777,6 @@ on a different port, it is stopped first so it can restart cleanly on the new po
       (ignore-errors (ws-stop mcpkit--active-server))
       (setq mcpkit--active-server nil))
     (setq mcpkit--active-services nil)
-    (message "[mcpkit]: all services stopped and server shutdown")
     t))
 
 ;;;###autoload
