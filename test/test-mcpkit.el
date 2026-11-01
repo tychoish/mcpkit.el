@@ -341,5 +341,217 @@
         (should-not (mcpkit-active-port))
         (should-not mcpkit--active-services)))))
 
+
+
+;;; Data Type Fidelity Tests
+
+(ert-deftest mcpkit-test-datatype-fidelity-coercion ()
+  "Test vector-to-list coercion across all nested and heterogeneous structures."
+  ;; 1. Scalars remain untouched
+  (should (equal (mcpkit--coerce-vector-to-list "hello") "hello"))
+  (should (equal (mcpkit--coerce-vector-to-list 42) 42))
+  (should (equal (mcpkit--coerce-vector-to-list 3.14) 3.14))
+  (should (equal (mcpkit--coerce-vector-to-list t) t))
+  (should (equal (mcpkit--coerce-vector-to-list nil) nil))
+  (should (equal (mcpkit--coerce-vector-to-list :json-false) :json-false))
+
+  ;; 2. Empty vector converts to nil (empty list)
+  (should (equal (mcpkit--coerce-vector-to-list (vector)) nil))
+
+  ;; 3. Flat vectors of strings, numbers, mixed
+  (should (equal (mcpkit--coerce-vector-to-list (vector "a" "b" "c")) '("a" "b" "c")))
+  (should (equal (mcpkit--coerce-vector-to-list (vector 1 2 3)) '(1 2 3)))
+  (should (equal (mcpkit--coerce-vector-to-list (vector "text" 42 3.14 t nil :json-false))
+                 '("text" 42 3.14 t nil :json-false)))
+
+  ;; 4. Nested vectors (2D and 3D)
+  (should (equal (mcpkit--coerce-vector-to-list (vector (vector 1 2) (vector 3 4)))
+                 '((1 2) (3 4))))
+  (should (equal (mcpkit--coerce-vector-to-list (vector (vector (vector "x"))))
+                 '((("x")))))
+
+  ;; 5. Plists with vectors
+  (should (equal (mcpkit--coerce-vector-to-list (list :name "test" :tags (vector "x" "y")))
+                 '(:name "test" :tags ("x" "y"))))
+
+  ;; 6. Deeply nested plists with vectors
+  (should (equal (mcpkit--coerce-vector-to-list
+                  (list :outer (list :inner (list :tags (vector "a" "b")))))
+                 '(:outer (:inner (:tags ("a" "b"))))))
+
+  ;; 7. Vectors of plists containing vectors
+  (should (equal (mcpkit--coerce-vector-to-list
+                  (vector (list :id 1 :tags (vector "a" "b"))
+                          (list :id 2 :tags (vector "c"))))
+                 '((:id 1 :tags ("a" "b"))
+                   (:id 2 :tags ("c")))))
+
+  ;; 8. Lists of vectors
+  (should (equal (mcpkit--coerce-vector-to-list
+                  (list (vector 1 2) (vector 3 4)))
+                 '((1 2) (3 4)))))
+
+(ert-deftest mcpkit-test-datatype-fidelity-required-params ()
+  "Test required parameter validation across schema formats and falsy values."
+  (let ((tool-str (make-mcpkit-tool :name "t-str"
+                                    :input-schema '(:type "object" :required ["foo"])))
+        (tool-sym (make-mcpkit-tool :name "t-sym"
+                                    :input-schema '(:type "object" :required [foo])))
+        (tool-kw (make-mcpkit-tool :name "t-kw"
+                                   :input-schema '(:type "object" :required [:foo])))
+        (tool-list (make-mcpkit-tool :name "t-list"
+                                     :input-schema '(:type "object" :required ("foo")))))
+
+    ;; Missing in all formats
+    (should (equal (mcpkit--missing-required-argument tool-str '(:other 1)) "foo"))
+    (should (equal (mcpkit--missing-required-argument tool-sym '(:other 1)) "foo"))
+    (should (equal (mcpkit--missing-required-argument tool-kw '(:other 1)) "foo"))
+    (should (equal (mcpkit--missing-required-argument tool-list '(:other 1)) "foo"))
+
+    ;; Falsy values must NOT be considered missing
+    (should-not (mcpkit--missing-required-argument tool-str '(:foo nil)))
+    (should-not (mcpkit--missing-required-argument tool-str '(:foo :json-false)))
+    (should-not (mcpkit--missing-required-argument tool-str '(:foo 0)))
+    (should-not (mcpkit--missing-required-argument tool-str '(:foo "")))
+    (should-not (mcpkit--missing-required-argument tool-str '(:foo [])))))
+
+(ert-deftest mcpkit-test-datatype-fidelity-roundtrip ()
+  "Test end-to-end JSON-RPC dispatch preserving data type fidelity."
+  (mcpkit-test--with-clean-env
+    (let ((svc (mcpkit-define-service 'fidelity-svc)))
+      ;; Register a tool that inspects all data types and returns structured verification
+      (mcpkit-register-tool inspect-types svc
+        :description "Tool to verify type fidelity"
+        :input-schema '(:type "object"
+                        :properties (:str (:type "string")
+                                     :int_val (:type "integer")
+                                     :float_val (:type "number")
+                                     :bool_true (:type "boolean")
+                                     :bool_false (:type "boolean")
+                                     :empty_arr (:type "array")
+                                     :str_arr (:type "array" :items (:type "string"))
+                                     :nested_obj (:type "object")
+                                     :arr_of_objs (:type "array")
+                                     :nested_matrix (:type "array"))
+                        :required ["str" "int_val" "bool_false"])
+        (list :str_is_string (stringp (plist-get args :str))
+              :str_val (plist-get args :str)
+              :int_is_integer (integerp (plist-get args :int_val))
+              :int_val (plist-get args :int_val)
+              :float_is_float (floatp (plist-get args :float_val))
+              :float_val (plist-get args :float_val)
+              :bool_true_val (plist-get args :bool_true)
+              :bool_false_val (plist-get args :bool_false)
+              :empty_arr_is_list (listp (plist-get args :empty_arr))
+              :empty_arr_nil (null (plist-get args :empty_arr))
+              :str_arr_is_list (listp (plist-get args :str_arr))
+              :str_arr_val (plist-get args :str_arr)
+              :nested_obj_tags_is_list (listp (plist-get (plist-get args :nested_obj) :tags))
+              :nested_obj_tags (plist-get (plist-get args :nested_obj) :tags)
+              :arr_of_objs_len (length (plist-get args :arr_of_objs))
+              :first_obj_slug (plist-get (car (plist-get args :arr_of_objs)) :slug)
+              :matrix_is_list_of_lists (and (listp (plist-get args :nested_matrix))
+                                            (listp (car (plist-get args :nested_matrix))))
+              :matrix_val (plist-get args :nested_matrix)))
+      (push (cons svc 'error) mcpkit--active-services)
+
+      ;; 1. Successful dispatch with full payload
+      (let* ((json-payload "{\"jsonrpc\":\"2.0\",\"id\":\"fid-1\",\"method\":\"tools/call\",\"params\":{\"name\":\"inspect-types\",\"arguments\":{\"str\":\"alpha\",\"int_val\":42,\"float_val\":3.1415,\"bool_true\":true,\"bool_false\":false,\"empty_arr\":[],\"str_arr\":[\"x\",\"y\",\"z\"],\"nested_obj\":{\"flag\":true,\"tags\":[\"t1\",\"t2\"]},\"arr_of_objs\":[{\"slug\":\"s1\",\"order\":1},{\"slug\":\"s2\",\"order\":2}],\"nested_matrix\":[[1,2],[3,4]]}}}")
+             status resp)
+        (mcpkit--handle-request-payload
+         json-payload
+         mcpkit--active-services
+         (lambda (s r &rest _rest) (setq status s resp r)))
+        (should (eq status 'success))
+        (let* ((result (plist-get resp :result))
+               (content (plist-get result :content)))
+          (should (vectorp content))
+          (let ((text (plist-get (aref content 0) :text)))
+            (should (string-search ":str_is_string t" text))
+            (should (string-search ":str_val \"alpha\"" text))
+            (should (string-search ":int_is_integer t" text))
+            (should (string-search ":int_val 42" text))
+            (should (string-search ":float_is_float t" text))
+            (should (string-search ":float_val 3.1415" text))
+            (should (string-search ":bool_true_val t" text))
+            (should (string-search ":bool_false_val nil" text))
+            (should (string-search ":empty_arr_is_list t" text))
+            (should (string-search ":empty_arr_nil t" text))
+            (should (string-search ":str_arr_is_list t" text))
+            (should (string-search ":str_arr_val (\"x\" \"y\" \"z\")" text))
+            (should (string-search ":nested_obj_tags_is_list t" text))
+            (should (string-search ":nested_obj_tags (\"t1\" \"t2\")" text))
+            (should (string-search ":arr_of_objs_len 2" text))
+            (should (string-search ":first_obj_slug \"s1\"" text))
+            (should (string-search ":matrix_is_list_of_lists t" text))
+            (should (string-search ":matrix_val ((1 2) (3 4))" text)))))
+
+      ;; 2. Falsy required parameters are accepted
+      (let* ((json-payload "{\"jsonrpc\":\"2.0\",\"id\":\"fid-2\",\"method\":\"tools/call\",\"params\":{\"name\":\"inspect-types\",\"arguments\":{\"str\":\"\",\"int_val\":0,\"bool_false\":false}}}")
+             status resp)
+        (mcpkit--handle-request-payload
+         json-payload
+         mcpkit--active-services
+         (lambda (s r &rest _rest) (setq status s resp r)))
+        (should (eq status 'success)))
+
+      ;; 3. Missing required parameter returns error
+      (let* ((json-payload "{\"jsonrpc\":\"2.0\",\"id\":\"fid-3\",\"method\":\"tools/call\",\"params\":{\"name\":\"inspect-types\",\"arguments\":{\"str\":\"present\",\"int_val\":1}}}")
+             status resp)
+        (mcpkit--handle-request-payload
+         json-payload
+         mcpkit--active-services
+         (lambda (s r &rest _rest) (setq status s resp r)))
+        (should (eq status 'error))
+        (should (= (plist-get (plist-get resp :error) :code) mcpkit-error-invalid-params))
+        (should (string-search "missing required parameter: bool_false"
+                               (plist-get (plist-get resp :error) :message)))))))
+
+(ert-deftest mcpkit-test-datatype-fidelity-return-encoding ()
+  "Test return value encoding and serialization fidelity across diverse types."
+  ;; String
+  (let* ((enc (mcpkit--default-encode "plain text")))
+    (should (equal enc '((:type "text" :text "plain text")))))
+
+  ;; Number
+  (let* ((enc (mcpkit--default-encode 100)))
+    (should (equal enc '((:type "text" :text "100")))))
+
+  ;; Float
+  (let* ((enc (mcpkit--default-encode 3.1415)))
+    (should (equal enc '((:type "text" :text "3.1415")))))
+
+  ;; Structured Plist
+  (let* ((enc (mcpkit--default-encode '(:status "ok" :count 5 :items ("a" "b")))))
+    (should (equal (plist-get (car enc) :type) "text"))
+    (should (string-search ":status \"ok\"" (plist-get (car enc) :text)))
+    (should (string-search ":count 5" (plist-get (car enc) :text))))
+
+  ;; Single custom content block
+  (let* ((enc (mcpkit--default-encode '(:type "resource" :uri "file:///foo"))))
+    (should (equal enc '((:type "resource" :uri "file:///foo")))))
+
+  ;; Multiple content blocks
+  (let* ((blocks '((:type "text" :text "chunk 1") (:type "text" :text "chunk 2")))
+         (enc (mcpkit--default-encode blocks)))
+    (should (equal enc blocks)))
+
+  ;; Full serialization to JSON string and parse back
+  (let* ((resp (mcpkit--make-success-response
+                "res-1"
+                (list :content (vector (list :type "text" :text "hello")
+                                       (list :type "image" :data "base64data"))
+                      :isError :json-false)))
+         (json (mcpkit--serialize-response resp))
+         (parsed (json-parse-string json :object-type 'plist :false-object :json-false :array-type 'list)))
+    (should (equal (plist-get parsed :jsonrpc) "2.0"))
+    (should (equal (plist-get parsed :id) "res-1"))
+    (let ((result (plist-get parsed :result)))
+      (should (equal (plist-get result :isError) :json-false))
+      (should (= (length (plist-get result :content)) 2))
+      (should (equal (plist-get (car (plist-get result :content)) :type) "text"))
+      (should (equal (plist-get (car (plist-get result :content)) :text) "hello"))
+      (should (equal (plist-get (cadr (plist-get result :content)) :type) "image"))
+      (should (equal (plist-get (cadr (plist-get result :content)) :data) "base64data")))))
 (provide 'test-mcpkit)
 ;;; test-mcpkit.el ends here

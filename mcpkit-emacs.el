@@ -171,21 +171,20 @@
                                :files (:type "array" :items (:type "string") :description "Optional list of filenames to mark"))
                   :required ["directory"])
   (let* ((dir (expand-file-name (plist-get args :directory)))
-         (files (plist-get args :files))
-         (file-list (if (vectorp files) (append files nil) files)))
+         (files (plist-get args :files)))
     (unless (file-directory-p dir)
       (user-error "Directory does not exist: %s" dir))
     (let ((buf (dired-noselect dir)))
       (with-current-buffer buf
-        (when file-list
+        (when files
           (dired-unmark-all-marks)
-          (dolist (f file-list)
+          (dolist (f files)
             (dired-goto-file (expand-file-name f dir))
             (dired-mark 1))))
       (display-buffer buf)
       (list :status "ok"
             :directory dir
-            :marked_files (if file-list (length file-list) 0)))))
+            :marked_files (if files (length files) 0)))))
 
 ;; 6. emacs_describe
 (mcpkit-register-tool 'emacs_describe 'emacs

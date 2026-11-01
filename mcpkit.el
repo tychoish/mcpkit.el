@@ -296,6 +296,49 @@ Tools are namespaced with service prefix if POLICY is \\='namespace."
               (resp (mcpkit--make-error-response id mcpkit-error-internal-error msg)))
          (funcall done-callback 'error resp tool-name dur msg))))))
 
+(defun mcpkit--missing-required-argument (tool arguments)
+  "Return name of first missing required parameter for TOOL in ARGUMENTS, or nil."
+  (when-let* ((schema (mcpkit-tool-input-schema tool))
+              (req (plist-get schema :required)))
+    (let ((req-list (if (vectorp req) (append req nil) req)))
+      (cl-some (lambda (prop)
+                 (let* ((name (if (symbolp prop) (symbol-name prop) (format "%s" prop)))
+                        (clean-name (if (string-prefix-p ":" name) (substring name 1) name))
+                        (key (intern (concat ":" clean-name))))
+                   (unless (plist-member arguments key)
+                     clean-name)))
+               req-list))))
+
+(defun mcpkit--coerce-vector-to-list (val)
+  "Recursively coerce VAL from vector to list.
+Recurses through vectors, lists, and plists so all vectors become lists
+while preserving strings, numbers, booleans, and null values."
+  (cond
+   ((vectorp val)
+    (mapcar #'mcpkit--coerce-vector-to-list (append val nil)))
+   ((and (listp val) (keywordp (car val)))
+    (let ((res (copy-sequence val))
+          (tail val))
+      (while tail
+        (let* ((k (car tail))
+               (v (cadr tail))
+               (coerced (mcpkit--coerce-vector-to-list v)))
+          (unless (eq v coerced)
+            (setq res (plist-put res k coerced))))
+        (setq tail (cddr tail)))
+      res))
+   ((and (listp val) (not (null val)))
+    (mapcar #'mcpkit--coerce-vector-to-list val))
+   (t val)))
+
+(defun mcpkit--default-decode-args (_tool args)
+  "Normalize ARGS by recursively converting JSON array vectors to lists.
+Preserves data fidelity for numbers, booleans, strings, nulls, and
+nested structures."
+  (if (or (null args) (not (listp args)))
+      args
+    (mcpkit--coerce-vector-to-list args)))
+
 (defun mcpkit--handle-tools-call (id params active-services done-callback &optional start-time)
   "Handle MCP tools/call request for ID and PARAMS on ACTIVE-SERVICES.
 Invoke DONE-CALLBACK with status, response-plist, tool-name, dur, msg."
@@ -314,10 +357,18 @@ Invoke DONE-CALLBACK with status, response-plist, tool-name, dur, msg."
              (msg (format "Tool not found: %s" tool-name))
              (resp (mcpkit--make-error-response id mcpkit-error-invalid-params msg)))
         (funcall done-callback 'error resp tool-name dur msg)))
+     ((when-let* ((missing (mcpkit--missing-required-argument tool arguments)))
+        (let* ((dur (* (- (float-time) start) 1000.0))
+               (msg (format "Invalid params: missing required parameter: %s" missing))
+               (resp (mcpkit--make-error-response id mcpkit-error-invalid-params msg)))
+          (funcall done-callback 'error resp tool-name dur msg)
+          t)))
      (t
       (condition-case decode-err
-          (let* ((decode-fn (or (mcpkit-tool-decode tool) #'identity))
-                 (decoded-args (funcall decode-fn (or arguments nil)))
+          (let* ((decode-fn (mcpkit-tool-decode tool))
+                 (decoded-args (if (or (null decode-fn) (eq decode-fn #'identity))
+                                   (mcpkit--default-decode-args tool (or arguments nil))
+                                 (funcall decode-fn (or arguments nil))))
                  (called nil)
                  (tool-done
                   (lambda (&rest cb-args)
