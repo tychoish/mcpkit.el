@@ -532,7 +532,9 @@ when `mcpkit-log-verbose' is non-nil."
      (lambda (status response-payload tool-name duration-ms err-msg &optional req-payload resp-payload)
        (if (eq status 'notification)
            (progn
-             (ws-response-header proc 202 (cons "Content-Length" "0"))
+             (ws-response-header proc 202
+                                 '("Connection" . "close")
+                                 (cons "Content-Length" "0"))
              (mcpkit--log status tool-name duration-ms err-msg (or req-payload body) ""))
          (let* ((json-str (if (stringp response-payload)
                               response-payload
@@ -540,6 +542,7 @@ when `mcpkit-log-verbose' is non-nil."
                 (bytes (string-bytes json-str)))
            (ws-response-header proc 200
                                '("Content-Type" . "application/json; charset=utf-8")
+                               '("Connection" . "close")
                                (cons "Content-Length" (number-to-string bytes)))
            (process-send-string proc json-str)
            (mcpkit--log status tool-name duration-ms err-msg (or req-payload body) (or resp-payload json-str))))))))

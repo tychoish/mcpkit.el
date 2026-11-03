@@ -180,6 +180,7 @@ transport failure (connection refused, timeout, etc)."
   (let ((bytes (string-bytes json-string)))
     (ws-response-header proc code
                         '("Content-Type" . "application/json; charset=utf-8")
+                        '("Connection" . "close")
                         (cons "Content-Length" (number-to-string bytes)))
     (process-send-string proc json-string)))
 
