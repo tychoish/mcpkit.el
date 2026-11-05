@@ -264,6 +264,13 @@ Tools are namespaced with service prefix if POLICY is \\='namespace."
          :capabilities (list :tools (list :listChanged :json-false))
          :serverInfo (list :name "mcpkit" :version "0.1.0"))))
 
+(defun mcpkit--wire-input-schema (schema)
+  "Return SCHEMA suitable for JSON encoding.
+A nil `:properties' would encode as null; encode it as an empty object."
+  (if (and (plist-member schema :properties) (null (plist-get schema :properties)))
+      (plist-put (copy-sequence schema) :properties (make-hash-table :test #'equal))
+    schema))
+
 (defun mcpkit--handle-tools-list (id active-tools)
   "Handle MCP tools/list request for ID and ACTIVE-TOOLS."
   (let* ((tools (mcpkit--normalize-tools active-tools))
@@ -271,8 +278,9 @@ Tools are namespaced with service prefix if POLICY is \\='namespace."
                        (seq-map (lambda (tool)
                                   (list :name (mcpkit-tool-name tool)
                                         :description (mcpkit-tool-description tool)
-                                        :inputSchema (or (mcpkit-tool-input-schema tool)
-                                                         '(:type "object"))))
+                                        :inputSchema (mcpkit--wire-input-schema
+                                                      (or (mcpkit-tool-input-schema tool)
+                                                          '(:type "object")))))
                                 tools))))
     (mcpkit--make-success-response id (list :tools descriptors))))
 
