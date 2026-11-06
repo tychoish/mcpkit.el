@@ -3,7 +3,7 @@
 ;; Author: sam kleinman <sam@tychoish.com>
 ;; Maintainer: sam kleinman <sam@tychoish.com>
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (web-server "0.1.2") (compat "30.0.0.0"))
+;; Package-Requires: ((emacs "29.1") (web-server "0.1.2") (compat "30.0.0.0") (gen "0.1.0"))
 ;; Keywords: comm, tools, mcp, rpc
 ;; URL: https://github.com/tychoish/mcpkit.el
 
