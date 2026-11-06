@@ -120,7 +120,8 @@ runner handle, which cancels pending loads when called."
 
 ;;;###autoload
 (defun mcpkit-start-services-on-instance-port ()
-  "Start all services on the running port, `mcpkit-services-port', or a derived one."
+  "Start all services on the running port, `mcpkit-services-port',
+or a derived one."
   (mcpkit-start-all-services
    (or (mcpkit-active-port)
        (and (integerp mcpkit-services-port) mcpkit-services-port)
