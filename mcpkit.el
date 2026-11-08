@@ -778,7 +778,7 @@ allocate an unused port from the operating system."
   :group 'mcpkit)
 
 (defcustom mcpkit-service-modules
-  '(mcpkit-emacs mcpkit-editing denote-mcp agent-shell-queue-mcp builder-mcp hitl-mcp)
+  '(mcpkit-emacs mcpkit-editing mcpkit-org denote-mcp agent-shell-queue-mcp builder-mcp hitl-mcp)
   "List of MCP service modules to require when loading all services."
   :type '(repeat symbol)
   :group 'mcpkit)

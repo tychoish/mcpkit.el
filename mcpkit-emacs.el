@@ -114,6 +114,42 @@
                 :truncated (if (and max-c (> size max-c)) t :json-false)
                 :content content))))))
 
+(mcpkit-register-tool 'emacs_buffer_append 'emacs
+  :description "Append text to a buffer or file, saving file-backed buffers."
+  :input-schema '(:type "object"
+                  :properties (:file_or_buffer (:type "string" :description "File path or existing buffer name")
+                               :content (:type "string" :description "Text to append")
+                               :ensure_newline (:type "boolean" :description "Start on a fresh line (default true)"))
+                  :required ["file_or_buffer" "content"])
+  (let* ((target (plist-get args :file_or_buffer))
+         (content (plist-get args :content))
+         (ensure-newline (or (not (plist-member args :ensure_newline))
+                             (and (plist-get args :ensure_newline)
+                                  (not (eq (plist-get args :ensure_newline) :json-false)))))
+         (enable-local-variables nil)
+         (enable-local-eval nil)
+         (large-file-warning-threshold nil))
+    (unless (and (stringp target) (not (string-empty-p target)) (stringp content))
+      (user-error "A nonempty file or buffer name and string content are required"))
+    (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) (user-error "Confirmation required")))
+              ((symbol-function 'yes-or-no-p) (lambda (&rest _) (user-error "Confirmation required"))))
+      (let ((buffer (or (get-buffer target)
+                        (find-file-noselect (expand-file-name target)))))
+        (with-current-buffer buffer
+          (save-restriction
+            (widen)
+            (save-excursion
+              (goto-char (point-max))
+              (when (and ensure-newline (> (point) (point-min))
+                         (not (eq (char-before) ?\n))
+                         (not (string-empty-p content))
+                         (not (eq (aref content 0) ?\n)))
+                (insert "\n"))
+              (insert content)))
+          (when buffer-file-name (save-buffer))
+          (list :status "ok" :buffer (buffer-name)
+                :file (or buffer-file-name "")))))))
+
 ;; 3. emacs_eval
 (mcpkit-register-tool 'emacs_eval 'emacs
   :description "Safely evaluate an Emacs Lisp expression string with prompt suppression."
