@@ -838,8 +838,9 @@ new port."
         (ignore-errors
           (mcpkit-start-service svc-name :port target-port :on-collision on-collision))))
     (let ((active (mcpkit-active-port)))
-      (message "[mcpkit]: active on port %s with %d services"
-               active (length (and (boundp 'mcpkit--active-services) mcpkit--active-services)))
+      (when (or debug-on-error init-file-debug)
+        (message "[mcpkit]: active on port %s with %d services"
+                 active (length (and (boundp 'mcpkit--active-services) mcpkit--active-services))))
       active)))
 
 ;;;###autoload

@@ -316,6 +316,26 @@
 
 ;;; Lifecycle & Multi-Service Tests
 
+(ert-deftest mcpkit-test-startup-announcement-debug-only ()
+  "Report the active port only when Emacs debugging is enabled."
+  (mcpkit-test--with-clean-env
+    (let ((debug-on-error nil)
+          (init-file-debug nil)
+          messages)
+      (cl-letf (((symbol-function 'mcpkit-active-port) (lambda () 8123))
+                ((symbol-function 'message)
+                 (lambda (format-string &rest args)
+                   (push (apply #'format format-string args) messages))))
+        (should (= 8123 (mcpkit-start-all-services 8123 :modules nil)))
+        (should-not messages)
+        (let ((debug-on-error t))
+          (should (= 8123 (mcpkit-start-all-services 8123 :modules nil))))
+        (should (equal messages '("[mcpkit]: active on port 8123 with 0 services")))
+        (setq messages nil)
+        (let ((init-file-debug t))
+          (should (= 8123 (mcpkit-start-all-services 8123 :modules nil))))
+        (should (equal messages '("[mcpkit]: active on port 8123 with 0 services")))))))
+
 (ert-deftest mcpkit-test-lifecycle-management ()
   "Test multi-service load, start, free-port migration, and teardown."
   (mcpkit-test--with-clean-env
