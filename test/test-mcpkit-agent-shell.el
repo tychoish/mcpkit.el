@@ -7,7 +7,8 @@
 (defvar agent-shell-mcp-servers nil)
 
 (ert-deftest mcpkit-agent-shell-test-real-deferred-load ()
-  (skip-when (featurep 'agent-shell))
+  (when (featurep 'agent-shell)
+    (ert-skip "agent-shell is already loaded"))
   (let ((after-load-alist nil)
         (agent-shell-mcp-servers nil)
         (mcpkit-agent-shell-mode nil)
@@ -26,7 +27,8 @@
       (delete-file file))))
 
 (ert-deftest mcpkit-agent-shell-test-real-deferred-enable ()
-  (skip-when (featurep 'agent-shell))
+  (when (featurep 'agent-shell)
+    (ert-skip "agent-shell is already loaded"))
   (let ((after-load-alist nil)
         (agent-shell-mcp-servers nil)
         (mcpkit-agent-shell-mode nil)

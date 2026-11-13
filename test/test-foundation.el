@@ -6,7 +6,8 @@
 (defconst mcpkit-foundation-test-root
   (file-name-directory (directory-file-name (file-name-directory (or load-file-name buffer-file-name)))))
 (ert-deftest mcpkit-foundation-core-without-agent-shell ()
-  (skip-when (featurep 'agent-shell))
+  (when (featurep 'agent-shell)
+    (ert-skip "agent-shell is already loaded"))
   (let ((load-path (cons mcpkit-foundation-test-root
                          (seq-remove (lambda (path) (string-match-p "agent-shell" path)) load-path)))
         (original-require (symbol-function 'require)))
@@ -17,7 +18,8 @@
       (should-not (locate-library "agent-shell"))
       (require 'mcpkit)
       (require 'mcpkit-services)
-      (skip-when (mcpkit-active-port))
+      (when (mcpkit-active-port)
+        (ert-skip "MCPKit already has an active listener"))
       (let ((mcpkit-service-modules nil)
             (mcpkit-registry nil)
             (mcpkit-services-port 0))
