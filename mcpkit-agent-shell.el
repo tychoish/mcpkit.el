@@ -23,6 +23,7 @@
 (defvar sprite-instance-id)
 (defvar server-name)
 (defvar mcpkit-proxy--server)
+(defvar mcpkit-agent-shell-mode)
 
 (defvar mcpkit-agent-shell--failed-server nil
   "Cons of a partially started server and its initialization error.")
