@@ -24,12 +24,12 @@
 ;;; Code coverage (undercover.el)
 ;;
 ;; Set EMACS_COVERAGE=1 (or UNDERCOVER_FORCE, which undercover.el also
-;; honors) before running the batch test runner to instrument lisp/*.el
+;; honors) before running the batch test runner to instrument root-level .el files
 ;; and write an lcov report that `cov-mode' can render as overlays.
 
 (when (or (getenv "EMACS_COVERAGE") (getenv "UNDERCOVER_FORCE"))
   (require 'undercover)
-  (undercover "lisp/*.el"
+  (undercover "*.el"
               (:report-format 'lcov)
               (:report-file (expand-file-name "coverage/lcov.info" test-helper-root))
               (:send-report nil)))

@@ -152,6 +152,31 @@ Standard production configuration using ~use-package~:
 
 - ~mcpkit-log-verbose~: When set to ~t~, log the full decoded request and response JSON payloads to the service's log buffer. Default is ~nil~.
 
+** Agent-shell integration
+
+The optional =mcpkit-agent-shell= module is available when included in the
+installed MCPKit version; MCPKit itself does not require agent-shell.  Load the
+module explicitly and enable the global mode, before or after agent-shell loads:
+
+#+BEGIN_SRC emacs-lisp
+(require 'mcpkit-agent-shell)
+(mcpkit-agent-shell-mode 1)
+;; To remove the integration, leaving shared services running:
+(mcpkit-agent-shell-mode -1)
+#+END_SRC
+
+New sessions resolve the current endpoint lazily.  The mode preserves existing
+global servers, and reports a collision with a server named =emacs=.  An agent's
+=:mcp-servers= setting takes precedence over the global list; include MCPKit in
+that setting separately if needed.  Explicit client environment entries win
+over the bridge's =MCPKIT_PORT=, =EMACS_MCP_PORT=, =EMACS_MCP_URL=,
+=EMACS_SPRITE_ID=, and =EMACS_SERVER_NAME= defaults.  These variables identify
+the direct service even when the ACP endpoint uses a proxy.
+
+Proxy routing requires a running MCPKit proxy with a registered route from the
+current =sprite-instance-id= to the direct service port.  Otherwise the ACP
+endpoint uses the direct URL.
+
 * Core Workflows & Examples
 :PROPERTIES:
 :CUSTOM_ID: core-workflows--examples
