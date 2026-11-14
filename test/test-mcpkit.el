@@ -28,7 +28,7 @@
       (should (eq (mcpkit-service-name svc) 'test-svc))
       (should (= (mcpkit-service-port svc) 9999))
       (should (equal (mcpkit-service-description svc) "Test service description"))
-      (should (equal (mcpkit-service-log-buffer-name svc) "*mcpkit-test-svc*"))
+      (should (equal (mcpkit-service-log-buffer-name svc) " *mcpkit-test-svc*"))
 
       ;; Lookup by symbol, string, and instance
       (should (eq (mcpkit-get-service 'test-svc) svc))

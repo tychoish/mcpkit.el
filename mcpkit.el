@@ -82,7 +82,7 @@ NAME defaults to the service's name symbol."
                   :name name
                   :port port
                   :description description
-                  :log-buffer-name (format "*mcpkit-%s*" name))))
+                  :log-buffer-name (format " *mcpkit-%s*" name))))
     (mcpkit-register-service service name)
     service))
 

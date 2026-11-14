@@ -608,7 +608,7 @@
 
     ;; 4. Service-specific log buffer when split-services is enabled
     (let* ((svc (mcpkit-define-service 'log-test-svc :port 8080 :description "Log test"))
-           (custom-buf (get-buffer-create "*mcpkit-log-test-svc*"))
+           (custom-buf (get-buffer-create " *mcpkit-log-test-svc*"))
            (logs-buf (get-buffer-create "*mcpkit-logs*")))
       (mcpkit-register-tool test-op 'log-test-svc :description "Test op" "res")
       (with-current-buffer custom-buf (erase-buffer))
