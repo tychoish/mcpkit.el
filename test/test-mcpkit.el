@@ -58,6 +58,8 @@
         (should (equal (mcpkit-tool-name tool) "add"))
         (should (equal (mcpkit-tool-description tool) "Add two numbers."))
         (should (equal (plist-get (mcpkit-tool-input-schema tool) :type) "object"))
+        (should (eq (mcpkit-tool-service tool) 'calc-svc))
+        (should (mcpkit-tool-source-file tool))
 
         ;; Verify handler invocation
         (let (cb-err cb-res)

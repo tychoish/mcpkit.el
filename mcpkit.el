@@ -50,7 +50,10 @@
   (input-schema nil :type list :documentation "Plist JSON Schema literal for input arguments.")
   (handler nil :documentation "Tool handler function (lambda (args done) ...).")
   (decode #'identity :type function :documentation "Function to decode raw arguments plist before calling handler.")
-  (encode #'mcpkit--default-encode :type function :documentation "Function to encode handler return value into content array."))
+  (encode #'mcpkit--default-encode :type function :documentation "Function to encode handler return value into content array.")
+  (service nil :type (or null symbol) :documentation "Symbol naming the owning service.")
+  (source-file nil :type (or null string) :documentation "Path to defining source file.")
+  (source-line nil :type (or null integer) :documentation "Line number where tool was defined."))
 
 (cl-defstruct (mcpkit-service
                (:constructor make-mcpkit-service--raw)
@@ -103,7 +106,8 @@ Alternatively returns NAME-OR-SERVICE if already a SERVICE instance."
 
 ;;; Tool Registration
 
-(defun mcpkit--register-tool (service-or-name tool-name-sym description input-schema decode encode _async handler-fn)
+(cl-defun mcpkit--register-tool (service-or-name tool-name-sym description input-schema decode encode _async handler-fn
+                                                  &key source-file source-line)
   "Register tool TOOL-NAME-SYM on SERVICE-OR-NAME with HANDLER-FN."
   (let ((service (mcpkit-get-service service-or-name)))
     (unless service
@@ -114,13 +118,17 @@ Alternatively returns NAME-OR-SERVICE if already a SERVICE instance."
                       ((and (listp tool-name-sym) (eq (car tool-name-sym) 'quote))
                        (symbol-name (cadr tool-name-sym)))
                       (t (format "%s" tool-name-sym))))
+           (svc-sym (mcpkit-service-name service))
            (tool (make-mcpkit-tool
                   :name name-str
                   :description (or description "")
                   :input-schema (or input-schema '(:type "object" :properties () :required []))
                   :decode (or decode #'identity)
                   :encode (or encode #'mcpkit--default-encode)
-                  :handler handler-fn)))
+                  :handler handler-fn
+                  :service svc-sym
+                  :source-file source-file
+                  :source-line source-line)))
       (setf (map-elt (mcpkit-service-tools service) name-str) tool)
       tool)))
 
@@ -137,6 +145,12 @@ BODY is the tool implementation, with ARGS (and DONE if ASYNC) bound."
   (let* ((tool-sym (if (and (listp name) (eq (car name) 'quote))
                        (cadr name)
                      name))
+         (src-file (or (macroexp-file-name)
+                       byte-compile-current-file
+                       load-file-name
+                       (and (boundp 'buffer-file-name) buffer-file-name)))
+         (src-line (when (and (bound-and-true-p point) (fboundp 'line-number-at-pos))
+                     (line-number-at-pos)))
          (body rest))
     (while (and body (keywordp (car body)))
       (setq body (cddr body)))
@@ -162,7 +176,9 @@ BODY is the tool implementation, with ARGS (and DONE if ASYNC) bound."
         ,decode
         ,encode
         ,async
-        ,handler))))
+        ,handler
+        :source-file ,src-file
+        :source-line ,src-line))))
 
 ;;; JSON-RPC 2.0 Codec & Error Constants
 
@@ -209,6 +225,8 @@ Tools are namespaced with service prefix if POLICY is \\='namespace."
     (when (mcpkit-service-p svc)
       (maphash
        (lambda (tname tool)
+         (unless (mcpkit-tool-service tool)
+           (setf (mcpkit-tool-service tool) (mcpkit-service-name svc)))
          (let ((exposed-name (if (eq policy 'namespace)
                                  (format "%s__%s" (mcpkit-service-name svc) tname)
                                tname)))
