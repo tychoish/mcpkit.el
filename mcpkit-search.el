@@ -319,8 +319,8 @@ ACTIVE-SERVICES optionally provides the service set (defaults to `mcpkit--active
          (param-str (if params (format "  Parameters: %s\n" (string-join params ", ")) "")))
     (format "- %s: %s\n%s" name desc param-str)))
 
-(defun mcpkit-search-tools-handler (args)
-  "Handle execution of the synthetic `search_tools' with ARGS plist."
+(defun mcpkit-search-tools-handler (args &optional done)
+  "Handle execution of the synthetic `search_tools' with ARGS plist and optional DONE callback."
   (let* ((query (plist-get args :query))
          (limit (or (plist-get args :limit) mcpkit-search-default-limit))
          (service (plist-get args :service))
@@ -346,9 +346,12 @@ ACTIVE-SERVICES optionally provides the service set (defaults to `mcpkit--active
                            :inputSchema (mcpkit--wire-input-schema
                                          (or (mcpkit-tool-input-schema tool)
                                              '(:type "object")))))
-                   results))))
-    (list :content (vector (list :type "text" :text text-lines))
-          :tools tool-descriptors)))
+                   results)))
+         (res (list :content (vector (list :type "text" :text text-lines))
+                    :tools tool-descriptors)))
+    (if done
+        (funcall done nil res)
+      res)))
 
 (defun mcpkit-search-make-search-tool ()
   "Construct the synthetic `search_tools' `mcpkit-tool' definition."

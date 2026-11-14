@@ -448,6 +448,43 @@ Register ~agent-shell-ask~ question queue tools on dedicated service ~'agent-she
 
 Custom boolean variable. When non-nil, log full decoded arguments and encoded results in the service log buffer.
 
+* Native Tool Search and Adaptive Gating
+:PROPERTIES:
+:CUSTOM_ID: tool-search-and-gating
+:END:
+
+When an MCP service hosts dozens of tools, listing the entire tool catalog in every ~tools/list~ payload rapidly degrades language model attention and consumes large amounts of context tokens.
+
+=mcpkit-search= provides native, adaptive tool search and collation:
+- *Adaptive Gating*: Controlled by ~mcpkit-search-mode~ (~auto~, ~always~, or ~never~, default ~auto~) and ~mcpkit-search-threshold~ (default ~25~). When the catalog exceeds the threshold, ~tools/list~ returns only pinned tools (~mcpkit-search-pinned-tools~) alongside a synthetic ~search_tools~ tool.
+- *Orderless-Powered Filtering*: Searches match across tool names, owning services, descriptions, and parameter schema names using ~orderless-filter~ (or a built-in token fallback when ~orderless~ is unavailable). Multi-word out-of-order queries (e.g. ~"buffer append"~) match seamlessly.
+- *Proxy and Sprite Collation*: Multi-process tools available across sub-daemon sprites are collated into a single canonical tool entry with process availability annotations (~[Available in processes: local, sprite:worker-1]~) rather than polluting the catalog with redundant duplicates.
+- *Direct Execution*: Any registered tool remains directly callable via ~tools/call~ without requiring prior discovery.
+
+* Usage Statistics and Telemetry
+:PROPERTIES:
+:CUSTOM_ID: usage-statistics-and-telemetry
+:END:
+
+=mcpkit-stats= automatically tracks execution metrics for all tool invocations:
+- *Metrics Tracked*: Call count, successes, errors, error percentage, latency percentiles (min, max, average, last), timestamp of last run, and a circular ring buffer of the last 10 errors with arguments.
+- *Interactive Dashboard*: ~M-x mcpkit-stats~ opens ~*mcpkit-stats*~ in ~tabulated-list-mode~.
+  - ~RET~ or ~v~: Inspect detailed tool metrics, schema, and error traces.
+  - ~i~: Jump directly to the Elisp tool definition in source code.
+  - ~l~: View and filter execution logs in ~*mcpkit-logs*~.
+  - ~c~: Reset metrics (with confirmation).
+  - ~g~: Refresh the view.
+- *Detail View*: Buffer ~*mcpkit-stats-tool: <name>*~ displays interactive action buttons, timing stats, JSON input schema, and error trace history.
+
+* Centralized Logging
+:PROPERTIES:
+:CUSTOM_ID: centralized-logging
+:END:
+
+All HTTP server processes and JSON-RPC dispatch events log directly to a unified buffer defined by ~mcpkit-log-buffer-name~ (default ~"*mcpkit-logs*~).
+- Set ~mcpkit-log-split-services~ to ~t~ if you wish to mirror logs into individual per-service hidden buffers (~" *mcpkit-<service>*"~) in addition to ~*mcpkit-logs*~.
+- Per-service buffers are hidden by default with a leading space to keep buffer lists uncluttered.
+
 * Related Packages
 :PROPERTIES:
 :CUSTOM_ID: related-packages
