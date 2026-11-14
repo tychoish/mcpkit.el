@@ -385,29 +385,40 @@ nested structures."
       args
     (mcpkit--coerce-vector-to-list args)))
 
+(defvar mcpkit-post-tool-call-functions nil
+  "Hook run after a tool call completes.
+Functions are called with five arguments:
+TOOL-NAME STATUS DURATION-MS ERR-MSG ARGUMENTS.")
+
 (defun mcpkit--handle-tools-call (id params active-services done-callback &optional start-time)
   "Handle MCP tools/call request for ID and PARAMS on ACTIVE-SERVICES.
 Invoke DONE-CALLBACK with status, response-plist, tool-name, dur, msg."
   (let* ((start (or start-time (float-time)))
          (tool-name (plist-get params :name))
          (arguments (plist-get params :arguments))
+         (wrapped-done
+          (lambda (status resp tname dur msg &rest rest)
+            (when tname
+              (run-hook-with-args 'mcpkit-post-tool-call-functions
+                                  tname status dur msg arguments))
+            (apply done-callback status resp tname dur msg rest)))
          (tool (when (stringp tool-name) (mcpkit--find-tool tool-name active-services))))
     (cond
      ((or (null tool-name) (not (stringp tool-name)))
       (let* ((dur (* (- (float-time) start) 1000.0))
              (msg "Invalid params: missing or invalid tool name")
              (resp (mcpkit--make-error-response id mcpkit-error-invalid-params msg)))
-        (funcall done-callback 'error resp tool-name dur msg)))
+        (funcall wrapped-done 'error resp tool-name dur msg)))
      ((null tool)
       (let* ((dur (* (- (float-time) start) 1000.0))
              (msg (format "Tool not found: %s" tool-name))
              (resp (mcpkit--make-error-response id mcpkit-error-invalid-params msg)))
-        (funcall done-callback 'error resp tool-name dur msg)))
+        (funcall wrapped-done 'error resp tool-name dur msg)))
      ((when-let* ((missing (mcpkit--missing-required-argument tool arguments)))
         (let* ((dur (* (- (float-time) start) 1000.0))
                (msg (format "Invalid params: missing required parameter: %s" missing))
                (resp (mcpkit--make-error-response id mcpkit-error-invalid-params msg)))
-          (funcall done-callback 'error resp tool-name dur msg)
+          (funcall wrapped-done 'error resp tool-name dur msg)
           t)))
      (t
       (condition-case decode-err
@@ -423,18 +434,18 @@ Invoke DONE-CALLBACK with status, response-plist, tool-name, dur, msg."
                       (let ((dur (* (- (float-time) start) 1000.0)))
                         (cond
                          ((and (car cb-args) (memq (car cb-args) '(success error)))
-                          (apply done-callback cb-args))
+                          (apply wrapped-done cb-args))
                          ((and (>= (length cb-args) 2) (car cb-args))
                           (let* ((err-val (car cb-args))
                                  (msg (if (stringp err-val) err-val (format "%s" err-val)))
                                  (resp (mcpkit--make-error-response id mcpkit-error-internal-error msg)))
-                            (funcall done-callback 'error resp tool-name dur msg)))
+                            (funcall wrapped-done 'error resp tool-name dur msg)))
                          ((>= (length cb-args) 2)
-                          (mcpkit--finish-tool-call id tool tool-name (cadr cb-args) start done-callback))
+                          (mcpkit--finish-tool-call id tool tool-name (cadr cb-args) start wrapped-done))
                          ((= (length cb-args) 1)
-                          (mcpkit--finish-tool-call id tool tool-name (car cb-args) start done-callback))
+                          (mcpkit--finish-tool-call id tool tool-name (car cb-args) start wrapped-done))
                          (t
-                          (mcpkit--finish-tool-call id tool tool-name nil start done-callback))))))))
+                          (mcpkit--finish-tool-call id tool tool-name nil start wrapped-done))))))))
             (condition-case handler-err
                 (funcall (mcpkit-tool-handler tool) decoded-args tool-done)
               (error
@@ -443,12 +454,12 @@ Invoke DONE-CALLBACK with status, response-plist, tool-name, dur, msg."
                  (let* ((dur (* (- (float-time) start) 1000.0))
                         (msg (error-message-string handler-err))
                         (resp (mcpkit--make-error-response id mcpkit-error-internal-error msg)))
-                   (funcall done-callback 'error resp tool-name dur msg))))))
+                   (funcall wrapped-done 'error resp tool-name dur msg))))))
         (error
          (let* ((dur (* (- (float-time) start) 1000.0))
                 (msg (format "Decode error: %s" (error-message-string decode-err)))
                 (resp (mcpkit--make-error-response id mcpkit-error-invalid-params msg)))
-           (funcall done-callback 'error resp tool-name dur msg))))))))
+           (funcall wrapped-done 'error resp tool-name dur msg))))))))
 
 (defun mcpkit--format-payload (payload)
   "Format PAYLOAD for log output."
