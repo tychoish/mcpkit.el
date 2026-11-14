@@ -221,5 +221,33 @@ error rather than raising a Lisp error, and the error-logging path fires."
       (mcpkit-proxy-stop)
       (mcpkit-stop-service 'proxy-test-backend))))
 
+(ert-deftest test-mcpkit-proxy/tool-catalog-caching ()
+  "Test fetching and caching of route tool catalogs."
+  (let ((mcpkit-proxy--route-catalogs (make-hash-table :test #'equal))
+        (mcpkit-proxy--routes (make-hash-table :test #'equal)))
+    (mcpkit-proxy-register-route "worker-x" 9999)
+    ;; Mock fetch-tools returning a tool list
+    (let ((fetch-count 0))
+      (cl-letf (((symbol-function 'mcpkit-proxy-fetch-tools)
+                 (lambda (target-id &optional _timeout)
+                   (setq fetch-count (1+ fetch-count))
+                   (list (make-mcpkit-tool :name "remote_eval" :service (intern target-id))))))
+        ;; First call invokes fetcher
+        (let ((tools (mcpkit-proxy-get-cached-tools "worker-x" 30.0)))
+          (should (= fetch-count 1))
+          (should (= (length tools) 1))
+          (should (equal (mcpkit-tool-name (car tools)) "remote_eval"))
+          ;; Populate cache manually to simulate what fetch-tools does
+          (puthash "worker-x" (cons (float-time) tools) mcpkit-proxy--route-catalogs))
+
+        ;; Second call with fresh TTL uses cache without re-fetching
+        (let ((cached (mcpkit-proxy-get-cached-tools "worker-x" 30.0)))
+          (should (= fetch-count 1))
+          (should (= (length cached) 1)))
+
+        ;; Unregister clears cache
+        (mcpkit-proxy-unregister-route "worker-x")
+        (should-not (gethash "worker-x" mcpkit-proxy--route-catalogs))))))
+
 (provide 'test-mcpkit-proxy)
 ;;; test-mcpkit-proxy.el ends here

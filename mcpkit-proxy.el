@@ -77,6 +77,14 @@ The (METHOD . PATH) pair is not guaranteed to be the first element of a
 `ws-request' headers alist -- the struct's default initform is `(list
 nil)', so real parsed headers commonly carry a leading nil cell.")
 
+(defvar mcpkit-proxy--route-catalogs (make-hash-table :test #'equal)
+  "Hash table mapping target-id to cons cell (TIMESTAMP . TOOL-LIST).")
+
+(defcustom mcpkit-proxy-catalog-cache-ttl 30.0
+  "Cache TTL in seconds for route tool catalogs."
+  :type 'number
+  :group 'mcpkit-proxy)
+
 ;;;###autoload
 (defun mcpkit-proxy-register-route (target-id port)
   "Register a routing rule mapping TARGET-ID to localhost:PORT."
@@ -84,8 +92,9 @@ nil)', so real parsed headers commonly carry a leading nil cell.")
 
 ;;;###autoload
 (defun mcpkit-proxy-unregister-route (target-id)
-  "Remove the routing rule for TARGET-ID."
-  (remhash target-id mcpkit-proxy--routes))
+  "Remove the routing rule for TARGET-ID and clear any cached catalog."
+  (remhash target-id mcpkit-proxy--routes)
+  (remhash target-id mcpkit-proxy--route-catalogs))
 
 (defun mcpkit-proxy--route-port (target-id)
   "Return the backend port registered for TARGET-ID, or nil."
@@ -99,6 +108,59 @@ nil)', so real parsed headers commonly carry a leading nil cell.")
                (push (list :target_id id :port port) routes))
              mcpkit-proxy--routes)
     (nreverse routes)))
+
+(defun mcpkit-proxy-fetch-tools (target-id &optional timeout)
+  "Fetch tools list from backend for TARGET-ID, returning `mcpkit-tool' list.
+TIMEOUT specifies request timeout in seconds (default 1.0)."
+  (let ((port (mcpkit-proxy--route-port target-id)))
+    (unless port
+      (error "No route registered for target-id: %s" target-id))
+    (condition-case err
+        (let* ((url-request-method "POST")
+               (url-request-extra-headers
+                '(("Content-Type" . "application/json; charset=utf-8")))
+               (body (mcpkit--serialize-response
+                      (list :jsonrpc "2.0" :id "proxy-fetch-tools" :method "tools/list" :params (make-hash-table))))
+               (url-request-data (encode-coding-string body 'utf-8))
+               (target-url (format "http://127.0.0.1:%d/mcp" port))
+               (buf (url-retrieve-synchronously target-url t t (or timeout 1.0))))
+          (unless buf
+            (error "No response from backend at %s" target-url))
+          (unwind-protect
+              (with-current-buffer buf
+                (goto-char (point-min))
+                (if (not (re-search-forward "\r?\n\r?\n" nil t))
+                    nil
+                  (let* ((json-str (buffer-substring-no-properties (point) (point-max)))
+                         (parsed (mcpkit--parse-request json-str))
+                         (res (plist-get parsed :result))
+                         (raw-tools (plist-get res :tools)))
+                    (when (vectorp raw-tools)
+                      (let ((tools
+                             (mapcar
+                              (lambda (raw)
+                                (make-mcpkit-tool
+                                 :name (plist-get raw :name)
+                                 :description (plist-get raw :description)
+                                 :input-schema (plist-get raw :inputSchema)
+                                 :service (intern (format "proxy:%s" target-id))))
+                              (append raw-tools nil))))
+                        (puthash target-id (cons (float-time) tools) mcpkit-proxy--route-catalogs)
+                        tools)))))
+            (kill-buffer buf)))
+      (error
+       (message "mcpkit-proxy: failed to fetch tools for target %s: %s"
+                target-id (error-message-string err))
+       nil))))
+
+(defun mcpkit-proxy-get-cached-tools (target-id &optional max-age)
+  "Return cached tools for TARGET-ID if younger than MAX-AGE seconds, else fetch."
+  (let* ((ttl (or max-age mcpkit-proxy-catalog-cache-ttl))
+         (entry (gethash target-id mcpkit-proxy--route-catalogs))
+         (now (float-time)))
+    (if (and entry (< (- now (car entry)) ttl))
+        (cdr entry)
+      (mcpkit-proxy-fetch-tools target-id))))
 
 ;;; Request Parsing & Route Resolution
 

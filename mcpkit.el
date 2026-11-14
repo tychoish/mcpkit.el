@@ -287,10 +287,33 @@ Tools are namespaced with service prefix if POLICY is \\='namespace."
       (nreverse tools)))
    (t nil)))
 
+(defcustom mcpkit-search-mode 'auto
+  "Controls tool search gating for MCP tools/list requests.
+- `auto': Gate tools/list behind `search_tools' when tool count exceeds `mcpkit-search-threshold'.
+- `always': Always gate tools/list behind `search_tools' and pinned tools.
+- `never': Always return the full tools catalog."
+  :type '(choice (const :tag "Adaptive (gate when threshold exceeded)" auto)
+                 (const :tag "Always gate with search_tools" always)
+                 (const :tag "Never gate (full catalog)" never))
+  :group 'mcpkit)
+
+(defcustom mcpkit-search-threshold 25
+  "Maximum number of tools emitted before activating tool search gating in `auto' mode."
+  :type 'integer
+  :group 'mcpkit)
+
+(defcustom mcpkit-search-pinned-tools '("search_tools")
+  "List of tool names always visible in `tools/list' even when search gating is active."
+  :type '(repeat string)
+  :group 'mcpkit)
+
 (defun mcpkit--find-tool (name active-services)
   "Find `mcpkit-tool' with NAME string in ACTIVE-SERVICES."
-  (seq-find (lambda (tool) (equal (mcpkit-tool-name tool) name))
-            (mcpkit--normalize-tools active-services)))
+  (or (seq-find (lambda (tool) (equal (mcpkit-tool-name tool) name))
+                (mcpkit--normalize-tools active-services))
+      (when (equal name "search_tools")
+        (when (require 'mcpkit-search nil t)
+          (mcpkit-search-make-search-tool)))))
 
 ;;; MCP Protocol Handlers
 
@@ -309,17 +332,43 @@ A nil `:properties' would encode as null; encode it as an empty object."
       (plist-put (copy-sequence schema) :properties (make-hash-table :test #'equal))
     schema))
 
+(defun mcpkit--search-gating-active-p (tool-count)
+  "Return non-nil if tool search gating should be activated for TOOL-COUNT."
+  (cond
+   ((eq mcpkit-search-mode 'never) nil)
+   ((eq mcpkit-search-mode 'always) t)
+   ((eq mcpkit-search-mode 'auto) (> tool-count mcpkit-search-threshold))
+   (t nil)))
+
 (defun mcpkit--handle-tools-list (id active-tools)
   "Handle MCP tools/list request for ID and ACTIVE-TOOLS."
   (let* ((tools (mcpkit--normalize-tools active-tools))
+         (tool-count (length tools))
+         (gated-p (mcpkit--search-gating-active-p tool-count))
+         (effective-tools
+          (if (not gated-p)
+              tools
+            (let* ((pinned-names (or mcpkit-search-pinned-tools '("search_tools")))
+                   (pinned (seq-filter (lambda (tool)
+                                         (member (mcpkit-tool-name tool) pinned-names))
+                                       tools))
+                   (has-search (seq-some (lambda (tool)
+                                           (equal (mcpkit-tool-name tool) "search_tools"))
+                                         pinned)))
+              (if (or has-search (not (member "search_tools" pinned-names)))
+                  pinned
+                (let ((search-tool (when (require 'mcpkit-search nil t)
+                                     (mcpkit-search-make-search-tool))))
+                  (if search-tool (cons search-tool pinned) pinned))))))
          (descriptors (vconcat
                        (seq-map (lambda (tool)
-                                  (list :name (mcpkit-tool-name tool)
-                                        :description (mcpkit-tool-description tool)
-                                        :inputSchema (mcpkit--wire-input-schema
-                                                      (or (mcpkit-tool-input-schema tool)
-                                                          '(:type "object")))))
-                                tools))))
+                                  (when tool
+                                    (list :name (mcpkit-tool-name tool)
+                                          :description (mcpkit-tool-description tool)
+                                          :inputSchema (mcpkit--wire-input-schema
+                                                        (or (mcpkit-tool-input-schema tool)
+                                                            '(:type "object"))))))
+                                (delq nil effective-tools)))))
     (mcpkit--make-success-response id (list :tools descriptors))))
 
 (defun mcpkit--finish-tool-call (id tool tool-name result start-time done-callback)

@@ -191,6 +191,55 @@
           (should (equal (plist-get first-tool :name) "test-tool-1"))
           (should (equal (plist-get first-tool :description) "Tool one")))))))
 
+(ert-deftest mcpkit-test-dispatch-tools-list-search-gating ()
+  "Test tools/list gating behind search_tools and pinned tools when count exceeds threshold."
+  (mcpkit-test--with-clean-env
+    (let ((svc (mcpkit-define-service 'svc-many-tools)))
+      ;; Register 5 tools
+      (dotimes (i 5)
+        (let ((tname (format "tool_%d" i)))
+          (puthash tname
+                   (make-mcpkit-tool
+                    :name tname
+                    :description (format "Description for tool %d" i)
+                    :handler (lambda (_args cb) (funcall cb "ok"))
+                    :service 'svc-many-tools)
+                   (mcpkit-service-tools svc))))
+      (push (cons svc 'error) mcpkit--active-services)
+
+      ;; Threshold = 3, mode = auto -> should gate
+      (let ((mcpkit-search-mode 'auto)
+            (mcpkit-search-threshold 3)
+            (mcpkit-search-pinned-tools '("tool_0" "search_tools")))
+        (let (dispatched-status dispatched-resp)
+          (mcpkit--handle-request-payload
+           "{\"jsonrpc\":\"2.0\",\"id\":20,\"method\":\"tools/list\"}"
+           mcpkit--active-services
+           (lambda (status resp &rest _)
+             (setq dispatched-status status
+                   dispatched-resp resp)))
+          (should (eq dispatched-status 'success))
+          (let* ((tools (plist-get (plist-get dispatched-resp :result) :tools))
+                 (names (mapcar (lambda (td) (plist-get td :name)) (append tools nil))))
+            ;; Pinned tool_0 and synthetic search_tools
+            (should (member "tool_0" names))
+            (should (member "search_tools" names))
+            ;; Unpinned tool_1 should not be listed
+            (should-not (member "tool_1" names))))
+
+        ;; Unlisted tool_1 should still be directly callable via tools/call!
+        (let (call-status call-resp)
+          (mcpkit--handle-request-payload
+           "{\"jsonrpc\":\"2.0\",\"id\":21,\"method\":\"tools/call\",\"params\":{\"name\":\"tool_1\",\"arguments\":{}}}"
+           mcpkit--active-services
+           (lambda (status resp &rest _)
+             (setq call-status status
+                   call-resp resp)))
+          (should (eq call-status 'success))
+          (let* ((content (plist-get (plist-get call-resp :result) :content))
+                 (text (plist-get (aref content 0) :text)))
+            (should (equal text "ok"))))))))
+
 (ert-deftest mcpkit-test-dispatch-tools-call-success ()
   "Test JSON-RPC tools/call dispatch with successful execution."
   (mcpkit-test--with-clean-env
