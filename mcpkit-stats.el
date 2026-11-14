@@ -3,7 +3,6 @@
 ;; Author: sam kleinman <sam@tychoish.com>
 ;; Maintainer: sam kleinman <sam@tychoish.com>
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (mcpkit "0.1.0"))
 ;; Keywords: comm, tools, mcp, stats
 ;; URL: https://github.com/tychoish/mcpkit.el
 
@@ -24,6 +23,8 @@
 (require 'ring)
 (require 'tabulated-list)
 (require 'mcpkit)
+
+(defvar mcpkit-log-buffer-name)
 
 (defgroup mcpkit-stats nil
   "Tool usage analytics and inspection for mcpkit."

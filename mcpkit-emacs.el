@@ -3,7 +3,6 @@
 ;; Author: sam kleinman <sam@tychoish.com>
 ;; Maintainer: sam kleinman <sam@tychoish.com>
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (mcpkit "0.1.0"))
 ;; Keywords: tools, mcp, emacs
 ;; URL: https://github.com/tychoish/mcpkit.el
 

@@ -25,6 +25,8 @@
 (require 'seq)
 (require 'web-server)
 
+(declare-function mcpkit-search-make-search-tool "mcpkit-search")
+
 ;;; Default Encoders and Decoders
 
 (defun mcpkit--default-encode (result)
@@ -149,8 +151,8 @@ BODY is the tool implementation, with ARGS (and DONE if ASYNC) bound."
                        byte-compile-current-file
                        load-file-name
                        (and (boundp 'buffer-file-name) buffer-file-name)))
-         (src-line (when (and (bound-and-true-p point) (fboundp 'line-number-at-pos))
-                     (line-number-at-pos)))
+         (src-line (when (fboundp 'line-number-at-pos)
+                     (ignore-errors (line-number-at-pos))))
          (body rest))
     (while (and body (keywordp (car body)))
       (setq body (cddr body)))
@@ -289,7 +291,8 @@ Tools are namespaced with service prefix if POLICY is \\='namespace."
 
 (defcustom mcpkit-search-mode 'auto
   "Controls tool search gating for MCP tools/list requests.
-- `auto': Gate tools/list behind `search_tools' when tool count exceeds `mcpkit-search-threshold'.
+- `auto': Gate tools/list behind `search_tools' when tool count
+  exceeds `mcpkit-search-threshold'.
 - `always': Always gate tools/list behind `search_tools' and pinned tools.
 - `never': Always return the full tools catalog."
   :type '(choice (const :tag "Adaptive (gate when threshold exceeded)" auto)
@@ -298,12 +301,12 @@ Tools are namespaced with service prefix if POLICY is \\='namespace."
   :group 'mcpkit)
 
 (defcustom mcpkit-search-threshold 25
-  "Maximum number of tools emitted before activating tool search gating in `auto' mode."
+  "Maximum tools emitted before activating search gating in `auto' mode."
   :type 'integer
   :group 'mcpkit)
 
 (defcustom mcpkit-search-pinned-tools '("search_tools")
-  "List of tool names always visible in `tools/list' even when search gating is active."
+  "List of tool names visible in `tools/list' when search gating is active."
   :type '(repeat string)
   :group 'mcpkit)
 
@@ -593,7 +596,8 @@ Invoke DONE-CALLBACK with status, resp, tool-name, dur, msg, req, resp-pl."
   :group 'mcpkit)
 
 (defcustom mcpkit-log-split-services nil
-  "When non-nil, mirror tool logs to per-service buffers in addition to `mcpkit-log-buffer-name'."
+  "When non-nil, mirror tool logs to per-service buffers.
+Also mirrors to `mcpkit-log-buffer-name'."
   :type 'boolean
   :group 'mcpkit)
 

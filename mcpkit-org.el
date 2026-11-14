@@ -1,6 +1,5 @@
 ;;; mcpkit-org.el --- Org manipulation service for mcpkit -*- lexical-binding: t; -*-
 
-;; Package-Requires: ((emacs "29.1") (mcpkit "0.1.0"))
 
 ;;; Commentary:
 ;; Structured Org insertion for MCP clients and other Elisp callers.

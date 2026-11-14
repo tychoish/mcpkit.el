@@ -1,6 +1,5 @@
 ;;; mcpkit-agent-shell.el --- Optional agent-shell bridge -*- lexical-binding: t; -*-
 
-;; Package-Requires: ((emacs "29.1") (mcpkit "0.1.0"))
 
 ;;; Commentary:
 ;; Opt-in integration between MCPKit and agent-shell.  Per-agent server lists

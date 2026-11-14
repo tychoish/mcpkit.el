@@ -3,7 +3,6 @@
 ;; Author: sam kleinman <sam@tychoish.com>
 ;; Maintainer: sam kleinman <sam@tychoish.com>
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (mcpkit "0.1.0"))
 ;; Keywords: comm, tools, mcp, search
 ;; URL: https://github.com/tychoish/mcpkit.el
 
@@ -28,6 +27,8 @@
 (require 'seq)
 (require 'mcpkit)
 (require 'orderless nil t)
+
+(defvar orderless-matching-styles)
 
 (defgroup mcpkit-search nil
   "Native tool search and proxy collation for mcpkit."
@@ -172,8 +173,9 @@ Higher score indicates greater relevance."
   (clrhash mcpkit-search--proxy-catalogs-cache))
 
 (defun mcpkit-search--fetch-proxy-tools (target-id port)
-  "Fetch tools list from localhost:PORT for TARGET-ID, returning `mcpkit-tool' list.
-Returns nil on failure or timeout without signaling an error."
+  "Fetch tools list from localhost:PORT for TARGET-ID.
+Return `mcpkit-tool' list, or nil on failure or timeout without
+signaling an error."
   (condition-case err
       (let* ((url-request-method "POST")
              (url-request-extra-headers
@@ -277,8 +279,9 @@ Attaches instance lists and appends availability notes to descriptions."
   "Search registered MCP tools matching QUERY string.
 LIMIT specifies the maximum number of matches returned.
 SERVICE optionally filters by owning service name (string or symbol).
-INCLUDE-PROXIES controls whether proxy sprite tools are collated (default t).
-ACTIVE-SERVICES optionally provides the service set (defaults to `mcpkit--active-services')."
+INCLUDE-PROXIES controls collation of proxy sprite tools (default t).
+ACTIVE-SERVICES optionally provides service set
+\(defaults to `mcpkit--active-services')."
   (let* ((services (or active-services mcpkit--active-services))
          (local-tools (mcpkit--normalize-tools services))
          (proxy-tools (when include-proxies (mcpkit-search--get-proxy-tools)))
@@ -320,7 +323,7 @@ ACTIVE-SERVICES optionally provides the service set (defaults to `mcpkit--active
     (format "- %s: %s\n%s" name desc param-str)))
 
 (defun mcpkit-search-tools-handler (args &optional done)
-  "Handle execution of the synthetic `search_tools' with ARGS plist and optional DONE callback."
+  "Handle execution of synthetic `search_tools' with ARGS and DONE."
   (let* ((query (plist-get args :query))
          (limit (or (plist-get args :limit) mcpkit-search-default-limit))
          (service (plist-get args :service))
