@@ -489,10 +489,38 @@ Invoke DONE-CALLBACK with status, resp, tool-name, dur, msg, req, resp-pl."
   :type 'boolean
   :group 'mcpkit)
 
+(defcustom mcpkit-log-buffer-name "*mcpkit-logs*"
+  "Name of the centralized log buffer for mcpkit services."
+  :type 'string
+  :group 'mcpkit)
+
+(defcustom mcpkit-log-split-services nil
+  "When non-nil, mirror tool logs to per-service buffers in addition to `mcpkit-log-buffer-name'."
+  :type 'boolean
+  :group 'mcpkit)
+
 (defun mcpkit--service-active-p (svc)
   "Return non-nil if SVC is currently active."
   (and (mcpkit-service-p svc)
        (seq-some (lambda (entry) (eq (car entry) svc)) mcpkit--active-services)))
+
+(defun mcpkit--service-for-tool (tool-name &optional active-services)
+  "Find the `mcpkit-service' in ACTIVE-SERVICES owning TOOL-NAME.
+Matches both un-namespaced and namespaced tool names."
+  (let ((services (or active-services mcpkit--active-services))
+        (name-str (if (symbolp tool-name) (symbol-name tool-name) (format "%s" tool-name))))
+    (cl-some
+     (lambda (entry)
+       (let* ((svc (car entry))
+              (collision (cdr entry))
+              (svc-name (symbol-name (mcpkit-service-name svc))))
+         (when (or (gethash name-str (mcpkit-service-tools svc))
+                   (and (eq collision 'namespace)
+                        (string-prefix-p (concat svc-name "__") name-str)
+                        (gethash (substring name-str (+ (length svc-name) 2))
+                                 (mcpkit-service-tools svc))))
+           svc)))
+     services)))
 
 (defun mcpkit--log (status tool-name duration-ms err-msg &optional req-payload resp-payload)
   "Log request outcome STATUS, TOOL-NAME, DURATION-MS, and ERR-MSG.
@@ -515,20 +543,18 @@ when `mcpkit-log-verbose' is non-nil."
                      ""))
          (log-line (format "[%s] %s %s %.2fms%s%s%s\n"
                            timestamp status-str tool-str dur-val err-str req-str resp-str))
-         (active-buf-names (seq-filter
-                            #'identity
-                            (seq-map (lambda (entry)
-                                       (let ((svc (car entry)))
-                                         (and (mcpkit-service-p svc)
-                                              (mcpkit-service-log-buffer-name svc))))
-                                     mcpkit--active-services)))
-         (buf-names (delete-dups (or active-buf-names (list "*mcpkit-server*")))))
+         (main-buf (or mcpkit-log-buffer-name "*mcpkit-logs*"))
+         (buf-names (list main-buf)))
+    (when (and mcpkit-log-split-services tool-name)
+      (when-let* ((svc (mcpkit--service-for-tool tool-name)))
+        (when-let* ((svc-buf (mcpkit-service-log-buffer-name svc)))
+          (push svc-buf buf-names))))
     (seq-do
      (lambda (buf-name)
        (with-current-buffer (get-buffer-create buf-name)
          (goto-char (point-max))
          (insert log-line)))
-     buf-names)))
+     (delete-dups buf-names))))
 
 (defun mcpkit--handle-request (request)
   "HTTP request handler called by `web-server' for REQUEST."
@@ -580,7 +606,7 @@ ON-COLLISION specifies how tool name collisions are handled:
       (push (cons svc on-collision) mcpkit--active-services))
     (unless mcpkit--active-server
       (let* ((listen-port (or port (mcpkit-service-port svc) (and (boundp 'mcpkit-default-port) mcpkit-default-port) 8765))
-             (log-buf (or (mcpkit-service-log-buffer-name svc) "*mcpkit-server*"))
+             (log-buf (or mcpkit-log-buffer-name "*mcpkit-logs*"))
              (srv (ws-start (list (cons (lambda (_req) t) #'mcpkit--handle-request))
                             listen-port
                             log-buf

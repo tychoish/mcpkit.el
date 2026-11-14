@@ -563,9 +563,11 @@
   (let ((mcpkit-registry nil)
         (mcpkit--active-services nil)
         (mcpkit--active-server nil)
-        (mcpkit-log-verbose nil))
-    ;; 1. Direct mcpkit--log with default buffer (*mcpkit-server*)
-    (let ((buf (get-buffer-create "*mcpkit-server*")))
+        (mcpkit-log-verbose nil)
+        (mcpkit-log-buffer-name "*mcpkit-logs*")
+        (mcpkit-log-split-services nil))
+    ;; 1. Direct mcpkit--log with default buffer (*mcpkit-logs*)
+    (let ((buf (get-buffer-create "*mcpkit-logs*")))
       (with-current-buffer buf (erase-buffer))
       (mcpkit--log 'success "my-tool" 12.345 nil)
       (with-current-buffer buf
@@ -580,7 +582,7 @@
           (should-not (string-match-p "\\[resp:" log-text)))))
 
     ;; 2. Log with error and nil tool name
-    (let ((buf (get-buffer-create "*mcpkit-server*")))
+    (let ((buf (get-buffer-create "*mcpkit-logs*")))
       (with-current-buffer buf (erase-buffer))
       (mcpkit--log 'error nil 5.0 "Something went wrong")
       (with-current-buffer buf
@@ -588,7 +590,7 @@
           (should (string-match-p "ERROR - 5\\.00ms \\[error: Something went wrong\\]" log-text)))))
 
     ;; 3. Verbose logging toggle
-    (let ((buf (get-buffer-create "*mcpkit-server*")))
+    (let ((buf (get-buffer-create "*mcpkit-logs*")))
       (with-current-buffer buf (erase-buffer))
       (let ((mcpkit-log-verbose nil))
         (mcpkit--log 'success "echo" 1.5 nil "{\"input\":\"test\"}" '(:result "ok"))
@@ -604,20 +606,26 @@
             (should (string-match-p "\\[req: {\"input\":\"test\"}\\]" log-text))
             (should (string-match-p "\\[resp: .*\"result\":\"ok\".*\\]" log-text))))))
 
-    ;; 4. Active service specific log buffer
+    ;; 4. Service-specific log buffer when split-services is enabled
     (let* ((svc (mcpkit-define-service 'log-test-svc :port 8080 :description "Log test"))
-           (custom-buf (get-buffer-create "*mcpkit-log-test-svc*")))
+           (custom-buf (get-buffer-create "*mcpkit-log-test-svc*"))
+           (logs-buf (get-buffer-create "*mcpkit-logs*")))
+      (mcpkit-register-tool test-op 'log-test-svc :description "Test op" "res")
       (with-current-buffer custom-buf (erase-buffer))
+      (with-current-buffer logs-buf (erase-buffer))
       (setq mcpkit--active-services (list (cons svc 'namespace)))
-      (mcpkit--log 'success "test-op" 42.0 nil)
-      (with-current-buffer custom-buf
-        (should (string-match-p "OK test-op 42\\.00ms" (buffer-string)))))
+      (let ((mcpkit-log-split-services t))
+        (mcpkit--log 'success "log-test-svc__test-op" 42.0 nil)
+        (with-current-buffer custom-buf
+          (should (string-match-p "OK log-test-svc__test-op 42\\.00ms" (buffer-string))))
+        (with-current-buffer logs-buf
+          (should (string-match-p "OK log-test-svc__test-op 42\\.00ms" (buffer-string))))))
 
-    ;; 5. End-to-end handle-request with logging
+    ;; 5. End-to-end handle-request with logging to *mcpkit-logs*
     (let* ((svc (mcpkit-define-service 'req-svc :port 8081))
-           (svc-buf (get-buffer-create "*mcpkit-req-svc*"))
+           (logs-buf (get-buffer-create "*mcpkit-logs*"))
            (mcpkit-log-verbose t))
-      (with-current-buffer svc-buf (erase-buffer))
+      (with-current-buffer logs-buf (erase-buffer))
       (mcpkit-register-tool ping 'req-svc
         :description "Ping tool"
         "pong")
@@ -638,8 +646,8 @@
                 (mcpkit--handle-request fake-req)
                 (should sent-body)
                 (should (string-match-p "\"pong\"" sent-body))
-                ;; Verify log was written to svc-buf
-                (with-current-buffer svc-buf
+                ;; Verify log was written to logs-buf
+                (with-current-buffer logs-buf
                   (let ((log-text (buffer-string)))
                     (should (string-match-p "OK req-svc__ping" log-text))
                     (should (string-match-p "\\[req: .*\\]" log-text))
