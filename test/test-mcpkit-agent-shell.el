@@ -5,6 +5,8 @@
 (when (locate-library "agent-shell") (require 'agent-shell))
 (require 'mcpkit-agent-shell)
 (defvar agent-shell-mcp-servers nil)
+(defvar sprite-instance-id nil)
+(defvar server-name nil)
 
 (ert-deftest mcpkit-agent-shell-test-real-deferred-load ()
   (when (featurep 'agent-shell)
