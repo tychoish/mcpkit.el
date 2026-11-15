@@ -62,6 +62,7 @@
   :group 'mcpkit
   :prefix "mcpkit-gptel-")
 
+(defvaralias 'gptel-mcp-default-services 'mcpkit-gptel-default-services)
 (defcustom mcpkit-gptel-default-services '(emacs)
   "List of mcpkit service name symbols to enable in gptel sessions by default.
 Can be a list of symbols such as `'(emacs denote)', or the symbol `all'
@@ -70,10 +71,12 @@ or t to enable all registered services."
                  (repeat :tag "Services" symbol))
   :group 'mcpkit-gptel)
 
+(defvaralias 'gptel-mcp-auto-enable-tools 'mcpkit-gptel-auto-enable-tools)
 (defcustom mcpkit-gptel-auto-enable-tools t
   "Whether to enable tool-calling automatically in gptel sessions.
-When non-nil, `mcpkit-gptel-setup-session' enables `gptel-use-tools' buffer-locally
-and populates `gptel-tools' with tools from `mcpkit-gptel-default-services'."
+When non-nil, `mcpkit-gptel-setup-session' enables `gptel-use-tools'
+buffer-locally and populates `gptel-tools' with tools from
+`mcpkit-gptel-default-services'."
   :type 'boolean
   :group 'mcpkit-gptel)
 
@@ -230,9 +233,10 @@ Tools are retrieved from `gptel--known-tools'."
 ;;;###autoload
 (defun mcpkit-gptel-setup-session (&optional buffer services)
   "Configure BUFFER (defaults to current buffer) for mcpkit tool calling.
-Registers all mcpkit services if not already registered, sets `gptel-use-tools'
-buffer-locally to t (if `mcpkit-gptel-auto-enable-tools' is non-nil), and populates
-`gptel-tools' buffer-locally with tools for SERVICES (defaulting to
+Registers all mcpkit services if not already registered, sets
+`gptel-use-tools' buffer-locally to t (if
+`mcpkit-gptel-auto-enable-tools' is non-nil), and populates `gptel-tools'
+buffer-locally with tools for SERVICES (defaulting to
 `mcpkit-gptel-default-services')."
   (interactive)
   (with-current-buffer (or buffer (current-buffer))
@@ -287,9 +291,6 @@ When enabled, attaches `mcpkit-gptel-setup-session' to `gptel-mode-hook'."
     (remove-hook 'gptel-mode-hook #'mcpkit-gptel-setup-session)))
 
 ;;; Backward compatibility aliases for gptel-mcp
-
-(defvaralias 'gptel-mcp-default-services 'mcpkit-gptel-default-services)
-(defvaralias 'gptel-mcp-auto-enable-tools 'mcpkit-gptel-auto-enable-tools)
 
 (defalias 'gptel-mcp--keyword-name #'mcpkit-gptel--keyword-name)
 (defalias 'gptel-mcp--convert-schema-node #'mcpkit-gptel--convert-schema-node)
