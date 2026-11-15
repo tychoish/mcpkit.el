@@ -61,6 +61,20 @@
         (agent-shell-mcp-servers (list #'mcpkit-agent-shell--server-spec)))
     (should-error (agent-shell--mcp-servers) :type 'cl-no-applicable-method)))
 
+(ert-deftest mcpkit-agent-shell-test-deduplicate-and-clean-resolvers ()
+  (cl-letf (((symbol-function 'mcpkit-agent-shell--port) (lambda () 8765)))
+    (mcpkit-agent-shell-test--with-mode
+      ;; Simulate an older duplicate closure already in agent-shell-mcp-servers
+      (push (lambda () (mcpkit-agent-shell--server-spec)) agent-shell-mcp-servers)
+      (should (= (length agent-shell-mcp-servers) 2))
+      ;; Resolution should deduplicate mcpkit resolvers rather than erroring with duplicate name
+      (let ((servers (agent-shell--mcp-servers)))
+        (should (= (length servers) 1))
+        (should (equal (map-elt (aref servers 0) 'name) "emacs")))
+      ;; Re-installing cleans up duplicates
+      (mcpkit-agent-shell--install)
+      (should (= (length agent-shell-mcp-servers) 1)))))
+
 (ert-deftest mcpkit-agent-shell-test-resolution-and-cleanup ()
   (let ((port 8765))
     (cl-letf (((symbol-function 'mcpkit-agent-shell--port) (lambda () port)))
