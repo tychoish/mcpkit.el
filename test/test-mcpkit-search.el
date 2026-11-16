@@ -139,6 +139,70 @@
             (should (= (length tools-vec) 1))
             (should (equal (plist-get (aref tools-vec 0) :name) "emacs_eval"))))))))
 
+(defun test-mcpkit-search--invoke-fixture ()
+  "Return an active-services list with an `echo_tool' handler."
+  (let* ((svc (make-mcpkit-service--raw :name 'emacs))
+         (tools-hash (make-hash-table :test #'equal))
+         (tool (make-mcpkit-tool
+                :name "echo_tool"
+                :description "Echo text"
+                :input-schema '(:type "object"
+                                :properties (:text (:type "string"))
+                                :required ["text"])
+                :handler (lambda (args &optional done)
+                           (let ((res (format "echo: %s" (plist-get args :text))))
+                             (if done
+                                 (funcall done nil res)
+                               res)))
+                :service 'emacs)))
+    (setf (map-elt tools-hash "echo_tool") tool)
+    (setf (mcpkit-service-tools svc) tools-hash)
+    (list svc)))
+
+(ert-deftest mcpkit-search-test-invoke-tool-success ()
+  "invoke_tool dispatches to the named tool and returns its content."
+  (let ((mcpkit--active-services (test-mcpkit-search--invoke-fixture)))
+    (let ((res (mcpkit-search-invoke-tool-handler
+                '(:name "echo_tool" :arguments (:text "hi")))))
+      (should (equal (plist-get (car res) :text) "echo: hi")))
+    ;; Async form via the tools/call path.
+    (let (captured)
+      (mcpkit--handle-tools-call
+       1 '(:name "invoke_tool" :arguments (:name "echo_tool" :arguments (:text "yo")))
+       mcpkit--active-services
+       (lambda (status resp &rest _) (setq captured (cons status resp))))
+      (should (eq (car captured) 'success))
+      (should (equal (plist-get (aref (plist-get (plist-get (cdr captured) :result) :content) 0) :text)
+                     "echo: yo")))))
+
+(ert-deftest mcpkit-search-test-invoke-tool-unknown ()
+  "invoke_tool errors on an unknown tool name."
+  (let ((mcpkit--active-services (test-mcpkit-search--invoke-fixture)))
+    (let ((err (should-error (mcpkit-search-invoke-tool-handler
+                              '(:name "no_such_tool" :arguments nil)))))
+      (should (string-match-p "Unknown tool: no_such_tool" (cadr err))))
+    (should-error (mcpkit-search-invoke-tool-handler '(:arguments nil)))
+    (should-error (mcpkit-search-invoke-tool-handler '(:name "invoke_tool")))))
+
+(ert-deftest mcpkit-search-test-invoke-tool-bad-arguments ()
+  "invoke_tool rejects non-object arguments and missing required params."
+  (let ((mcpkit--active-services (test-mcpkit-search--invoke-fixture)))
+    (let ((err (should-error (mcpkit-search-invoke-tool-handler
+                              '(:name "echo_tool" :arguments "oops")))))
+      (should (string-match-p "arguments must be an object" (cadr err))))
+    (let ((err (should-error (mcpkit-search-invoke-tool-handler
+                              '(:name "echo_tool" :arguments (:other 1))))))
+      (should (string-match-p "missing required parameter: text" (cadr err))))))
+
+(ert-deftest mcpkit-search-test-invoke-tool-definition-and-search-hint ()
+  "invoke_tool is findable and search_tools results point to it."
+  (let ((mcpkit--active-services (test-mcpkit-search--invoke-fixture)))
+    (should (equal (mcpkit-tool-name (mcpkit--find-tool "invoke_tool" nil)) "invoke_tool"))
+    (let* ((res (mcpkit-search-tools-handler '(:query "echo" :include_proxies :json-false)))
+           (text (plist-get (aref (plist-get res :content) 0) :text)))
+      (should (string-match-p "echo_tool" text))
+      (should (string-match-p "invoke_tool" text)))))
+
 (provide 'test-mcpkit-search)
 
 ;;; test-mcpkit-search.el ends here

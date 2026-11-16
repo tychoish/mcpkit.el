@@ -20,6 +20,8 @@
 ;; 2. Exact-match and prefix-boosted result re-ranking.
 ;; 3. Collation of proxy/sprite instances to deduplicate tools across sub-daemons.
 ;; 4. A synthetic `search_tools' MCP tool for on-demand tool discovery.
+;; 5. A synthetic `invoke_tool' MCP tool that calls a discovered (local or
+;;    proxied) tool by name.
 
 ;;; Code:
 
@@ -29,6 +31,9 @@
 (require 'orderless nil t)
 
 (defvar orderless-matching-styles)
+
+(declare-function mcpkit-proxy-list-routes "mcpkit-proxy")
+(declare-function mcpkit-proxy--forward-request "mcpkit-proxy")
 
 (defgroup mcpkit-search nil
   "Native tool search and proxy collation for mcpkit."
@@ -340,7 +345,10 @@ ACTIVE-SERVICES optionally provides service set
             (concat (format "Found %d matching tool%s:\n\n"
                             (length results)
                             (if (= (length results) 1) "" "s"))
-                    (mapconcat #'mcpkit-search--format-tool-summary results "\n"))))
+                    (mapconcat #'mcpkit-search--format-tool-summary results "\n")
+                    "\nTo call any of these tools, use the invoke_tool tool with "
+                    "`name' (the tool name above) and `arguments' (an object "
+                    "matching the tool's parameters).")))
          (tool-descriptors
           (vconcat
            (mapcar (lambda (tool)
@@ -374,6 +382,121 @@ ACTIVE-SERVICES optionally provides service set
       (:type "boolean" :description "Whether to include tools from proxy sprite routes (default true)"))
      :required ["query"])
    :handler #'mcpkit-search-tools-handler
+   :service 'core))
+
+;;; Synthetic `invoke_tool' Definition
+
+(defun mcpkit-search--keep-args (args)
+  "Return ARGS unchanged.
+Used as the `invoke_tool' decoder so the target tool's own decoder sees
+the original JSON-derived arguments."
+  args)
+
+(defun mcpkit-search--find-proxy-tool (name target-id)
+  "Return the proxy `mcpkit-tool' named NAME, or nil.
+When TARGET-ID is non-nil, only consider tools from that proxy target."
+  (seq-find (lambda (tool)
+              (and (equal (mcpkit-tool-name tool) name)
+                   (or (null target-id)
+                       (equal (format "%s" (mcpkit-tool-service tool))
+                              (format "proxy:%s" target-id)))))
+            (mcpkit-search--get-proxy-tools)))
+
+(defun mcpkit-search--call-proxy-tool (tool args)
+  "Call proxy TOOL with ARGS via its backend route.
+Return the content list of the result, or signal an error."
+  (let* ((svc (format "%s" (mcpkit-tool-service tool)))
+         (target-id (substring svc (length "proxy:")))
+         (route (seq-find (lambda (r) (equal (format "%s" (plist-get r :target_id)) target-id))
+                          (mcpkit-proxy-list-routes)))
+         (body (mcpkit--serialize-response
+                (list :jsonrpc "2.0" :id "invoke-tool" :method "tools/call"
+                      :params (list :name (mcpkit-tool-name tool)
+                                    :arguments (or args (make-hash-table))))))
+         (reply (progn
+                  (unless route
+                    (error "No route registered for target: %s" target-id))
+                  (mcpkit-proxy--forward-request (plist-get route :port) body)))
+         (parsed (mcpkit--parse-request (cdr reply)))
+         (err (plist-get parsed :error)))
+    (when err
+      (error "%s" (or (plist-get err :message) "proxy tool call failed")))
+    (append (plist-get (plist-get parsed :result) :content) nil)))
+
+(defun mcpkit-search--local-tool-p (name)
+  "Return non-nil if NAME is a tool in the active services."
+  (seq-some (lambda (tool) (equal (mcpkit-tool-name tool) name))
+            (mcpkit--normalize-tools mcpkit--active-services)))
+
+(defun mcpkit-search-invoke-tool-handler (args &optional done)
+  "Handle execution of synthetic `invoke_tool' with ARGS and DONE.
+ARGS has `:name' (tool name from `search_tools') and `:arguments' (object).
+Signal an error for an unknown tool, a malformed `:arguments', or missing
+required parameters; otherwise return (or pass to DONE) the tool's content."
+  (let* ((name (plist-get args :name))
+         (arguments (plist-get args :arguments))
+         (target-id (plist-get args :target_id))
+         (outcome nil)
+         (finish (lambda (err content)
+                   (setq outcome (cons err content))
+                   (when done
+                     (funcall done err content)))))
+    (cond
+     ((or (not (stringp name)) (string-empty-p name))
+      (funcall finish "Invalid params: missing or invalid tool name" nil))
+     ((member name '("invoke_tool" "search_tools"))
+      (funcall finish (format "Tool %s cannot be invoked via invoke_tool; call it directly" name) nil))
+     ((and arguments (not (and (listp arguments) (keywordp (car arguments)))))
+      (funcall finish "Invalid params: arguments must be an object" nil))
+     ((and (null target-id) (mcpkit-search--local-tool-p name))
+      (mcpkit--handle-tools-call
+       "invoke-tool" (list :name name :arguments arguments) mcpkit--active-services
+       (lambda (status resp &rest _)
+         (cond
+          ((plist-get resp :error)
+           (funcall finish (plist-get (plist-get resp :error) :message) nil))
+          ((eq status 'success)
+           (funcall finish nil (append (plist-get (plist-get resp :result) :content) nil)))
+          (t
+           (funcall finish (format "Tool call failed: %s" name) nil))))))
+     ((and (fboundp 'mcpkit-proxy-list-routes)
+           (mcpkit-search--find-proxy-tool name target-id))
+      (condition-case err
+          (let* ((tool (mcpkit-search--find-proxy-tool name target-id))
+                 (missing (mcpkit--missing-required-argument tool arguments)))
+            (cond
+             (missing
+              (funcall finish (format "Invalid params: missing required parameter: %s" missing) nil))
+             (t
+              (funcall finish nil (mcpkit-search--call-proxy-tool tool arguments)))))
+        (error
+         (funcall finish (error-message-string err) nil))))
+     (t
+      (funcall finish (format "Unknown tool: %s; use search_tools to find available tools" name) nil)))
+    (cond
+     (done nil)
+     ((car outcome)
+      (error "%s" (car outcome)))
+     (t
+      (cdr outcome)))))
+
+(defun mcpkit-search-make-invoke-tool ()
+  "Construct the synthetic `invoke_tool' `mcpkit-tool' definition."
+  (make-mcpkit-tool
+   :name "invoke_tool"
+   :description "Invoke a tool discovered with search_tools, by name, passing its arguments as an object."
+   :input-schema
+   '(:type "object"
+     :properties
+     (:name
+      (:type "string" :description "Tool name exactly as returned by search_tools")
+      :arguments
+      (:type "object" :description "Arguments for the tool, matching its parameters")
+      :target_id
+      (:type "string" :description "Optional proxy target id to route the call to"))
+     :required ["name"])
+   :handler #'mcpkit-search-invoke-tool-handler
+   :decode #'mcpkit-search--keep-args
    :service 'core))
 
 (provide 'mcpkit-search)

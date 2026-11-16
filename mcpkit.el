@@ -26,6 +26,7 @@
 (require 'web-server)
 
 (declare-function mcpkit-search-make-search-tool "mcpkit-search")
+(declare-function mcpkit-search-make-invoke-tool "mcpkit-search")
 
 ;;; Default Encoders and Decoders
 
@@ -312,7 +313,7 @@ Tools are namespaced with service prefix if POLICY is \\='namespace."
   :type 'integer
   :group 'mcpkit)
 
-(defcustom mcpkit-search-pinned-tools '("search_tools")
+(defcustom mcpkit-search-pinned-tools '("search_tools" "invoke_tool")
   "List of tool names visible in `tools/list' when search gating is active."
   :type '(repeat string)
   :group 'mcpkit)
@@ -321,9 +322,13 @@ Tools are namespaced with service prefix if POLICY is \\='namespace."
   "Find `mcpkit-tool' with NAME string in ACTIVE-SERVICES."
   (or (seq-find (lambda (tool) (equal (mcpkit-tool-name tool) name))
                 (mcpkit--normalize-tools active-services))
-      (when (equal name "search_tools")
-        (when (require 'mcpkit-search nil t)
-          (mcpkit-search-make-search-tool)))))
+      (when (and (member name '("search_tools" "invoke_tool"))
+                 (require 'mcpkit-search nil t))
+        (cond
+         ((equal name "search_tools")
+          (mcpkit-search-make-search-tool))
+         (t
+          (mcpkit-search-make-invoke-tool))))))
 
 ;;; MCP Protocol Handlers
 
@@ -362,14 +367,15 @@ A nil `:properties' would encode as null; encode it as an empty object."
                    (pinned (seq-filter (lambda (tool)
                                          (member (mcpkit-tool-name tool) pinned-names))
                                        tools))
-                   (has-search (seq-some (lambda (tool)
-                                           (equal (mcpkit-tool-name tool) "search_tools"))
-                                         pinned)))
-              (if (or has-search (not (member "search_tools" pinned-names)))
-                  pinned
-                (let ((search-tool (when (require 'mcpkit-search nil t)
-                                     (mcpkit-search-make-search-tool))))
-                  (if search-tool (cons search-tool pinned) pinned))))))
+                   (synthetic (seq-keep
+                               (lambda (name)
+                                 (when (and (member name pinned-names)
+                                            (not (seq-some (lambda (tool)
+                                                             (equal (mcpkit-tool-name tool) name))
+                                                           pinned)))
+                                   (mcpkit--find-tool name nil)))
+                               '("search_tools" "invoke_tool"))))
+              (append synthetic pinned))))
          (descriptors (vconcat
                        (seq-map (lambda (tool)
                                   (when tool
