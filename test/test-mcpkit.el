@@ -9,12 +9,14 @@
   `(let ((mcpkit-registry nil)
          (mcpkit--active-services nil)
          (mcpkit--active-server nil)
+         (mcpkit--active-port nil)
          (mcpkit-log-verbose nil))
      (unwind-protect
          (progn ,@body)
        (when mcpkit--active-server
          (ignore-errors (ws-stop mcpkit--active-server))
-         (setq mcpkit--active-server nil)))))
+         (setq mcpkit--active-server nil
+               mcpkit--active-port nil)))))
 
 ;;; Service Registration and Lookup Tests
 
@@ -352,15 +354,31 @@
       (mcpkit-register-tool t1 svc1 "T1" "res1")
       (mcpkit-register-tool t2 svc1 "T2" "res2")
 
+      (should (equal (mcpkit-registered-services) '(svc-second svc-first)))
+      (should (equal (mcpkit--registered-services) '(svc-second svc-first)))
+
       (let ((entries (mcpkit--service-list-entries)))
         (should (= (length entries) 2))
         (let* ((first-entry (assoc 'svc-first entries))
                (row (cadr first-entry)))
           (should (equal (aref row 0) "svc-first"))
           (should (equal (aref row 1) "inactive"))
-          (should (equal (aref row 2) "8001"))
+          (should (equal (aref row 2) "-"))
           (should (equal (aref row 3) "2"))
-          (should (equal (aref row 4) "First Svc")))))))
+          (should (equal (aref row 4) "First Svc"))))
+
+      (push (cons svc1 'namespace) mcpkit--active-services)
+      (setq mcpkit--active-server 'mock-server
+            mcpkit--active-port 21226)
+      (let* ((entries (mcpkit--service-list-entries))
+             (first-row (cadr (assoc 'svc-first entries)))
+             (second-row (cadr (assoc 'svc-second entries))))
+        (should (equal (aref first-row 1) "active"))
+        (should (equal (aref first-row 2) "21226"))
+        (should (equal (aref second-row 1) "inactive"))
+        (should (equal (aref second-row 2) "-"))
+        (setq mcpkit--active-server nil
+              mcpkit--active-port nil)))))
 
 ;;; Agent-Shell-Ask Tools Registration Test
 

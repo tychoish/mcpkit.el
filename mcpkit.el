@@ -106,6 +106,13 @@ Alternatively returns NAME-OR-SERVICE if already a SERVICE instance."
   (when-let* ((svc (mcpkit-get-service name-or-service)))
     (setq mcpkit-registry (map-delete mcpkit-registry (mcpkit-service-name svc)))))
 
+;;;###autoload
+(defun mcpkit-registered-services ()
+  "Return a list of registered MCP service name symbols."
+  (mapcar #'car (and (boundp 'mcpkit-registry) mcpkit-registry)))
+
+(defalias 'mcpkit--registered-services #'mcpkit-registered-services)
+
 ;;; Tool Registration
 
 (cl-defun mcpkit--register-tool (service-or-name tool-name-sym description input-schema decode encode _async handler-fn
@@ -585,6 +592,9 @@ Invoke DONE-CALLBACK with status, resp, tool-name, dur, msg, req, resp-pl."
 (defvar mcpkit--active-server nil
   "The shared live `ws-server' instance.")
 
+(defvar mcpkit--active-port nil
+  "Port number on which the shared MCP server is listening, or nil.")
+
 (defcustom mcpkit-log-verbose nil
   "When non-nil, log full decoded arguments and encoded results in `mcpkit--log`."
   :type 'boolean
@@ -712,8 +722,13 @@ ON-COLLISION specifies how tool name collisions are handled:
              (srv (ws-start (list (cons (lambda (_req) t) #'mcpkit--handle-request))
                             listen-port
                             log-buf
-                            :host 'local)))
-        (setq mcpkit--active-server srv)))
+                            :host 'local))
+             (proc (ignore-errors (ws-process srv))))
+        (setq mcpkit--active-server srv
+              mcpkit--active-port
+              (if (processp proc)
+                  (plist-get (process-contact proc t) :service)
+                (or (ignore-errors (ws-port srv)) listen-port)))))
     (setf (mcpkit-service-server svc) mcpkit--active-server)
     svc))
 
@@ -732,7 +747,8 @@ If no active services remain, close the underlying `ws-server' socket."
       (setf (mcpkit-service-server svc) nil)
       (when (and (null mcpkit--active-services) mcpkit--active-server)
         (ignore-errors (ws-stop mcpkit--active-server))
-        (setq mcpkit--active-server nil)))
+        (setq mcpkit--active-server nil
+              mcpkit--active-port nil)))
     svc))
 
 ;;;###autoload
@@ -744,10 +760,11 @@ the way to discover it after the fact, e.g. for external bootstrapping via
 `emacsclient --eval \"(mcpkit-active-port)\"'."
   (interactive)
   (when mcpkit--active-server
-    (let ((proc (ignore-errors (ws-process mcpkit--active-server))))
-      (if (processp proc)
-          (plist-get (process-contact proc t) :service)
-        (ignore-errors (ws-port mcpkit--active-server))))))
+    (or mcpkit--active-port
+        (let ((proc (ignore-errors (ws-process mcpkit--active-server))))
+          (if (processp proc)
+              (plist-get (process-contact proc t) :service)
+            (ignore-errors (ws-port mcpkit--active-server)))))))
 
 ;;; Autostart
 
@@ -818,12 +835,11 @@ started on `after-init-hook' (or immediately if Emacs has already initialized)."
    (lambda (entry)
      (let* ((name-sym (car entry))
             (svc (cdr entry))
-            (status-str (if (mcpkit--service-active-p svc) "active" "inactive"))
-            (port-str (if (mcpkit--service-active-p svc)
-                        (number-to-string (or (mcpkit-active-port) 0))
-                      (if (mcpkit-service-port svc)
-                          (number-to-string (mcpkit-service-port svc))
-                        "-")))
+            (active-p (mcpkit--service-active-p svc))
+            (status-str (if active-p "active" "inactive"))
+            (port-str (if active-p
+                          (number-to-string (or (mcpkit-active-port) 0))
+                        "-"))
             (tools-str (number-to-string (hash-table-count (mcpkit-service-tools svc))))
             (desc (or (mcpkit-service-description svc) "")))
        (list name-sym
@@ -906,7 +922,7 @@ allocate an unused port from the operating system."
   :group 'mcpkit)
 
 (defcustom mcpkit-service-modules
-  '(mcpkit-emacs mcpkit-editing mcpkit-org denote-mcp agent-shell-queue-mcp builder-mcp hitl-mcp)
+  '(mcpkit-emacs mcpkit-editing mcpkit-org denote-mcp agent-shell-queue-mcp builder-mcp hitl-mcp magit-dash-mcp)
   "List of MCP service modules to require when loading all services."
   :type '(repeat symbol)
   :group 'mcpkit)
@@ -984,7 +1000,8 @@ new port."
     (when (and (boundp 'mcpkit--active-server) mcpkit--active-server)
       (ignore-errors (ws-stop mcpkit--active-server))
       (setq mcpkit--active-server nil))
-    (setq mcpkit--active-services nil)
+    (setq mcpkit--active-port nil
+          mcpkit--active-services nil)
     t))
 
 ;;;###autoload

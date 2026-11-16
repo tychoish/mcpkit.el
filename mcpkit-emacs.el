@@ -47,7 +47,7 @@
 
 ;; 1. emacs_server_status
 (mcpkit-register-tool 'emacs_server_status 'emacs
-  :description "Return Emacs process status, versions, uptime, and active mcpkit services."
+  :description "Return Emacs process status, versions, uptime, and active/inactive mcpkit services."
   :input-schema '(:type "object" :properties ())
   (ignore args)
   (list :emacs_version emacs-version
@@ -57,11 +57,16 @@
         :uptime_seconds (floor (float-time (time-subtract (current-time) before-init-time)))
         :active_mcp_services (vconcat (seq-map (lambda (entry)
                                                  (symbol-name (mcpkit-service-name (car entry))))
-                                               (bound-and-true-p mcpkit--active-services)))))
+                                               (bound-and-true-p mcpkit--active-services)))
+        :inactive_mcp_services (vconcat (seq-map (lambda (entry)
+                                                   (symbol-name (car entry)))
+                                                 (seq-remove (lambda (entry)
+                                                               (mcpkit--service-active-p (cdr entry)))
+                                                             (bound-and-true-p mcpkit-registry))))))
 
 ;; 1b. emacs_whoami
 (mcpkit-register-tool 'emacs_whoami 'emacs
-  :description "Identify the Emacs instance: daemon name, process ID (PID), active MCP port, user, and active services."
+  :description "Identify the Emacs instance: daemon name, process ID (PID), active MCP port, user, and active/inactive services."
   :input-schema '(:type "object" :properties ())
   (ignore args)
   (list :daemon_name (or (bound-and-true-p server-name)
@@ -74,7 +79,12 @@
         :emacs_version emacs-version
         :active_services (vconcat (seq-map (lambda (entry)
                                              (symbol-name (mcpkit-service-name (car entry))))
-                                           (bound-and-true-p mcpkit--active-services)))))
+                                           (bound-and-true-p mcpkit--active-services)))
+        :inactive_services (vconcat (seq-map (lambda (entry)
+                                               (symbol-name (car entry)))
+                                             (seq-remove (lambda (entry)
+                                                           (mcpkit--service-active-p (cdr entry)))
+                                                         (bound-and-true-p mcpkit-registry))))))
 
 ;; 1c. emacs_proxy_routes
 (mcpkit-register-tool 'emacs_proxy_routes 'emacs

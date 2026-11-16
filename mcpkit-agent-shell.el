@@ -24,55 +24,18 @@
 (defvar mcpkit-proxy--server)
 (defvar mcpkit-agent-shell-mode)
 
-(defvar mcpkit-agent-shell--failed-server nil
-  "Cons of a partially started server and its initialization error.")
-(defvar mcpkit-agent-shell--startup-error nil
-  "First service startup error recorded during bridge initialization.")
-
 (defgroup mcpkit-agent-shell nil
   "Optional agent-shell integration."
   :group 'mcpkit)
 
-(defun mcpkit-agent-shell--record-start-error (original &rest args)
-  "Record an error from ORIGINAL with ARGS before propagating it."
-  (condition-case err
-      (apply original args)
-    (error
-     (unless mcpkit-agent-shell--startup-error
-       (setq mcpkit-agent-shell--startup-error err))
-     (signal (car err) (cdr err)))))
-
 (defun mcpkit-agent-shell--port ()
-  "Return the current direct port, starting services if needed."
-  (let ((port (mcpkit-active-port)))
-    (when mcpkit-agent-shell--failed-server
-      (if (and port (eq mcpkit--active-server (car mcpkit-agent-shell--failed-server)))
-          (let ((err (cdr mcpkit-agent-shell--failed-server)))
-            (signal (car err) (cdr err)))
-        (setq mcpkit-agent-shell--failed-server nil)))
-    (or port
+  "Return the current direct port, starting services if needed.
+Reads the active port set when the MCP service starts; if called in the narrow
+startup window before services are up, initializes them synchronously."
+  (or (mcpkit-active-port)
       (progn
-        ;; A missing optional module is normal; a broken installed one is not.
-        (seq-do (lambda (module)
-                  (if (or (featurep module) (locate-library (symbol-name module)))
-                      (require module)
-                    (message "[mcpkit-agent-shell]: skipping unavailable %s" module)))
-                mcpkit-service-modules)
-        (let ((mcpkit-agent-shell--startup-error nil))
-          (unwind-protect
-              (progn
-                (advice-add 'mcpkit-start-service :around #'mcpkit-agent-shell--record-start-error)
-                (mcpkit-init-services-sync))
-            (advice-remove 'mcpkit-start-service #'mcpkit-agent-shell--record-start-error))
-          (when mcpkit-agent-shell--startup-error
-            (when (mcpkit-active-port)
-              (setq mcpkit-agent-shell--failed-server
-                    (cons mcpkit--active-server mcpkit-agent-shell--startup-error)))
-            (signal (car mcpkit-agent-shell--startup-error)
-                    (cdr mcpkit-agent-shell--startup-error))))
-        (or (mcpkit-active-port)
-            (when (and (boundp 'mcpkit-registry) mcpkit-registry)
-              (error "MCPKit failed to start registered services")))))))
+        (ignore-errors (mcpkit-init-services-sync))
+        (mcpkit-active-port))))
 
 (defun mcpkit-agent-shell--proxy-port (port instance)
   "Return a live proxy port for INSTANCE routed to PORT, if available."
@@ -174,9 +137,7 @@ ARGS are passed to ORIGINAL.  Agent-specific lists are left untouched."
 (define-minor-mode mcpkit-agent-shell-mode
   "Globally bridge MCPKit into agent-shell sessions.
 Per-agent server lists override the global list.  Explicit client environment
-entries win over the MCPKit defaults.  A partial startup failure is reported
-again while its listener remains active; restarting the listener or disabling
-the mode clears that error.  Disabling leaves services running."
+entries win over the MCPKit defaults.  Disabling leaves services running."
   :global t
   :group 'mcpkit-agent-shell
   (if mcpkit-agent-shell-mode
@@ -184,7 +145,6 @@ the mode clears that error.  Disabling leaves services running."
           (mcpkit-agent-shell--install)
         (with-eval-after-load 'agent-shell
           (mcpkit-agent-shell--install)))
-    (setq mcpkit-agent-shell--failed-server nil)
     (when (boundp 'agent-shell-mcp-servers)
       (setq agent-shell-mcp-servers
             (seq-remove #'mcpkit-agent-shell--resolver-p agent-shell-mcp-servers)))
