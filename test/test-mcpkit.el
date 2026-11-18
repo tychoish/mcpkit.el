@@ -642,5 +642,52 @@
       (should (equal (plist-get (car (plist-get result :content)) :text) "hello"))
       (should (equal (plist-get (cadr (plist-get result :content)) :type) "image"))
       (should (equal (plist-get (cadr (plist-get result :content)) :data) "base64data")))))
+
+(ert-deftest mcpkit-test-standard-reporting ()
+  "Verify standard reporting metrics (tool name, input/output size, duration) in mcpkit--log."
+  (mcpkit-test-with-clean-state
+    (let ((logx-events nil)
+          (test-buf (get-buffer-create "*test-mcpkit-reporting*")))
+      (unwind-protect
+          (let ((mcpkit-log-buffer-name (buffer-name test-buf)))
+            (cl-letf (((symbol-function 'logx--ring-push)
+                       (lambda (ev) (push ev logx-events) ev)))
+              ;; 1. Successful call reporting
+              (mcpkit--log 'success "emacs_describe" 12.5 nil
+                           "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"params\":{\"name\":\"emacs_describe\"}}"
+                           "{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"doc\"}]}}")
+              (should logx-events)
+              (let* ((ev (car logx-events))
+                     (data (plist-get ev :data)))
+                (should (eq (plist-get ev :lvl) 'info))
+                (should (eq (plist-get ev :cat) 'mcpkit-tool))
+                (should (equal (plist-get data :tool) "emacs_describe"))
+                (should (equal (plist-get data :status) "ok"))
+                (should (= (plist-get data :duration_ms) 12.5))
+                (should (> (plist-get data :input_bytes) 0))
+                (should (> (plist-get data :output_bytes) 0)))
+
+              ;; Verify text buffer contains formatted line with input/output size
+              (with-current-buffer test-buf
+                (let ((text (buffer-string)))
+                  (should (string-match-p "OK emacs_describe 12.50ms (in: [0-9]+B, out: [0-9]+B)" text))))
+
+              ;; 2. Failed call reporting
+              (mcpkit--log 'error "unknown_tool" 3.2 "Tool not found: unknown_tool"
+                           "{\"tool\":\"unknown_tool\"}"
+                           "{\"error\":-32601}")
+              (let* ((err-ev (car logx-events))
+                     (err-data (plist-get err-ev :data)))
+                (should (eq (plist-get err-ev :lvl) 'error))
+                (should (eq (plist-get err-ev :cat) 'mcpkit-tool))
+                (should (equal (plist-get err-data :tool) "unknown_tool"))
+                (should (equal (plist-get err-data :status) "error"))
+                (should (= (plist-get err-data :duration_ms) 3.2))
+                (should (equal (plist-get err-data :error) "Tool not found: unknown_tool"))
+                (should (> (plist-get err-data :input_bytes) 0))
+                (should (> (plist-get err-data :output_bytes) 0)))))
+        (when (buffer-live-p test-buf)
+          (kill-buffer test-buf))))))
+
 (provide 'test-mcpkit)
 ;;; test-mcpkit.el ends here

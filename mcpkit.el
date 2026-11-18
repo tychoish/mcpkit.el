@@ -645,6 +645,15 @@ Matches both un-namespaced and namespaced tool names."
            svc)))
      services)))
 
+(defun mcpkit--payload-bytes (payload)
+  "Calculate PAYLOAD byte size safely."
+  (cond
+   ((null payload) 0)
+   ((stringp payload) (string-bytes payload))
+   (t (condition-case nil
+          (string-bytes (mcpkit--format-payload payload))
+        (error 0)))))
+
 (defun mcpkit--log (status tool-name duration-ms err-msg &optional req-payload resp-payload)
   "Log request outcome STATUS, TOOL-NAME, DURATION-MS, and ERR-MSG.
 REQ-PAYLOAD and RESP-PAYLOAD are optional request and response payloads logged
@@ -656,6 +665,8 @@ Emits structured `logx' events categorized by subsystem."
                     (format "%s" tool-name)
                   "-"))
          (err (and err-msg (not (string-empty-p (format "%s" err-msg))) (format "%s" err-msg)))
+         (in-bytes (mcpkit--payload-bytes req-payload))
+         (out-bytes (mcpkit--payload-bytes resp-payload))
          (timestamp (format-time-string "%Y-%m-%d %H:%M:%S.%3N"))
          (status-str (if is-ok "OK" "ERROR"))
          (err-str (if err (format " [error: %s]" err) ""))
@@ -665,8 +676,8 @@ Emits structured `logx' events categorized by subsystem."
          (resp-str (if (and mcpkit-log-verbose resp-payload)
                        (format " [resp: %s]" (mcpkit--format-payload resp-payload))
                      ""))
-         (log-line (format "[%s] %s %s %.2fms%s%s%s\n"
-                           timestamp status-str tname dur-val err-str req-str resp-str))
+         (log-line (format "[%s] %s %s %.2fms (in: %dB, out: %dB)%s%s%s\n"
+                           timestamp status-str tname dur-val in-bytes out-bytes err-str req-str resp-str))
          (main-buf (or mcpkit-log-buffer-name "*mcpkit-logs*"))
          (buf-names (list main-buf)))
     (when (and mcpkit-log-split-services tool-name)
@@ -680,21 +691,27 @@ Emits structured `logx' events categorized by subsystem."
          (insert log-line)))
      (delete-dups buf-names))
     (if is-ok
-        (logx-info :cat 'mcpkit-tool
-                   :msg (format "Tool %s completed in %.2fms" tname dur-val)
-                   :tool tname
-                   :status "ok"
-                   :duration_ms dur-val
-                   :req req-payload
-                   :resp resp-payload)
-      (logx-error :cat 'mcpkit-tool
-                  :msg (format "Tool %s failed in %.2fms: %s" tname dur-val (or err "unknown error"))
-                  :tool tname
-                  :status "error"
-                  :duration_ms dur-val
-                  :error err
-                  :req req-payload
-                  :resp resp-payload))))
+        (logx 'info
+              (format "Tool %s completed in %.2fms (in: %dB, out: %dB)" tname dur-val in-bytes out-bytes)
+              :cat 'mcpkit-tool
+              :tool tname
+              :status "ok"
+              :duration_ms dur-val
+              :input_bytes in-bytes
+              :output_bytes out-bytes
+              :req req-payload
+              :resp resp-payload)
+      (logx 'error
+            (format "Tool %s failed in %.2fms (in: %dB, out: %dB): %s" tname dur-val in-bytes out-bytes (or err "unknown error"))
+            :cat 'mcpkit-tool
+            :tool tname
+            :status "error"
+            :duration_ms dur-val
+            :error err
+            :input_bytes in-bytes
+            :output_bytes out-bytes
+            :req req-payload
+            :resp resp-payload))))
 
 (defun mcpkit--handle-request (request)
   "HTTP request handler called by `web-server' for REQUEST."
