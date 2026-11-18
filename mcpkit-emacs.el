@@ -459,6 +459,145 @@
     (display-buffer buf)
     (list :status "ok" :buffer buf-name :length (length content))))
 
+;; 10. emacs_list_buffers
+(mcpkit-register-tool 'emacs_list_buffers 'emacs
+  :description "List active Emacs buffers with file path, modified status, mode, and size."
+  :input-schema '(:type "object" :properties () :required [])
+  (ignore args)
+  (let ((buffers nil))
+    (dolist (buf (buffer-list))
+      (when (buffer-live-p buf)
+        (with-current-buffer buf
+          (push (list :name (buffer-name buf)
+                      :file (or (buffer-file-name buf) :json-null)
+                      :modified (if (buffer-modified-p buf) t :json-false)
+                      :read_only (if buffer-read-only t :json-false)
+                      :mode (symbol-name major-mode)
+                      :size (buffer-size buf))
+                buffers))))
+    (vconcat (nreverse buffers))))
+
+(mcpkit-register-tool 'mcp_buffer_list 'emacs
+  :description "Alias for emacs_list_buffers."
+  :input-schema '(:type "object" :properties () :required [])
+  :async t
+  (let* ((service (mcpkit-get-service 'emacs))
+         (tool (map-elt (mcpkit-service-tools service) "emacs_list_buffers")))
+    (funcall (mcpkit-tool-handler tool) args done)))
+
+;; 11. emacs_kill_buffer
+(mcpkit-register-tool 'emacs_kill_buffer 'emacs
+  :description "Kill a named Emacs buffer or file-visiting buffer."
+  :input-schema '(:type "object"
+                  :properties (:buffer (:type "string" :description "Buffer name or visited file path"))
+                  :required ["buffer"])
+  (let* ((target (plist-get args :buffer))
+         (buf (or (get-buffer target)
+                  (find-buffer-visiting target))))
+    (unless buf
+      (user-error "Buffer not found: %s" target))
+    (let ((name (buffer-name buf)))
+      (kill-buffer buf)
+      (list :status "ok" :killed name))))
+
+(mcpkit-register-tool 'mcp_buffer_kill 'emacs
+  :description "Alias for emacs_kill_buffer."
+  :input-schema '(:type "object"
+                  :properties (:buffer (:type "string" :description "Buffer name or visited file path"))
+                  :required ["buffer"])
+  :async t
+  (let* ((service (mcpkit-get-service 'emacs))
+         (tool (map-elt (mcpkit-service-tools service) "emacs_kill_buffer")))
+    (funcall (mcpkit-tool-handler tool) args done)))
+
+;; 12. emacs_save_buffer
+(mcpkit-register-tool 'emacs_save_buffer 'emacs
+  :description "Save a file-visiting buffer to disk without interactive prompts."
+  :input-schema '(:type "object"
+                  :properties (:buffer (:type "string" :description "Buffer name or visited file path"))
+                  :required ["buffer"])
+  (let* ((target (plist-get args :buffer))
+         (buf (or (get-buffer target)
+                  (find-buffer-visiting target))))
+    (unless buf
+      (user-error "Buffer not found: %s" target))
+    (with-current-buffer buf
+      (if (buffer-file-name buf)
+          (progn
+            (save-buffer)
+            (list :status "ok" :saved (buffer-name buf) :file (buffer-file-name buf)))
+        (list :status "error" :error "Buffer is not visiting a file" :buffer (buffer-name buf))))))
+
+(mcpkit-register-tool 'mcp_buffer_save 'emacs
+  :description "Alias for emacs_save_buffer."
+  :input-schema '(:type "object"
+                  :properties (:buffer (:type "string" :description "Buffer name or visited file path"))
+                  :required ["buffer"])
+  :async t
+  (let* ((service (mcpkit-get-service 'emacs))
+         (tool (map-elt (mcpkit-service-tools service) "emacs_save_buffer")))
+    (funcall (mcpkit-tool-handler tool) args done)))
+
+;; 13. emacs_revert_buffer
+(mcpkit-register-tool 'emacs_revert_buffer 'emacs
+  :description "Revert a file-visiting buffer from disk without interactive prompts."
+  :input-schema '(:type "object"
+                  :properties (:buffer (:type "string" :description "Buffer name or visited file path"))
+                  :required ["buffer"])
+  (let* ((target (plist-get args :buffer))
+         (buf (or (get-buffer target)
+                  (find-buffer-visiting target))))
+    (unless buf
+      (user-error "Buffer not found: %s" target))
+    (with-current-buffer buf
+      (if (buffer-file-name buf)
+          (progn
+            (revert-buffer t t)
+            (list :status "ok" :reverted (buffer-name buf) :file (buffer-file-name buf)))
+        (list :status "error" :error "Buffer is not visiting a file" :buffer (buffer-name buf))))))
+
+(mcpkit-register-tool 'mcp_buffer_revert 'emacs
+  :description "Alias for emacs_revert_buffer."
+  :input-schema '(:type "object"
+                  :properties (:buffer (:type "string" :description "Buffer name or visited file path"))
+                  :required ["buffer"])
+  :async t
+  (let* ((service (mcpkit-get-service 'emacs))
+         (tool (map-elt (mcpkit-service-tools service) "emacs_revert_buffer")))
+    (funcall (mcpkit-tool-handler tool) args done)))
+
+;; 14. emacs_get_messages
+(mcpkit-register-tool 'emacs_get_messages 'emacs
+  :description "Fetch trailing log lines from *Messages*, *Compile-Log*, or *mcpkit-logs*."
+  :input-schema '(:type "object"
+                  :properties (:buffer (:type "string" :description "Log buffer name (default '*Messages*')")
+                               :tail_lines (:type "integer" :description "Number of trailing lines to return (default 50)"))
+                  :required [])
+  (let* ((buf-name (or (plist-get args :buffer) "*Messages*"))
+         (tail (or (plist-get args :tail_lines) 50))
+         (buf (get-buffer buf-name)))
+    (if (null buf)
+        (list :buffer buf-name :exists :json-false :lines [] :error "Buffer not found")
+      (with-current-buffer buf
+        (let ((lines (split-string (buffer-substring-no-properties (point-min) (point-max)) "\n" t)))
+          (when (> (length lines) tail)
+            (setq lines (nthcdr (- (length lines) tail) lines)))
+          (list :buffer buf-name
+                :exists t
+                :line_count (length lines)
+                :lines (vconcat lines)
+                :text (string-join lines "\n")))))))
+
+(mcpkit-register-tool 'mcp_get_messages 'emacs
+  :description "Alias for emacs_get_messages."
+  :input-schema '(:type "object"
+                  :properties (:buffer (:type "string") :tail_lines (:type "integer"))
+                  :required [])
+  :async t
+  (let* ((service (mcpkit-get-service 'emacs))
+         (tool (map-elt (mcpkit-service-tools service) "emacs_get_messages")))
+    (funcall (mcpkit-tool-handler tool) args done)))
+
 ;;;###autoload
 (defun mcpkit-emacs-register ()
   "Ensure `mcpkit-emacs-service' is registered in `mcpkit-registry' and return it.

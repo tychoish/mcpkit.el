@@ -27,6 +27,8 @@
 
 (require 'subr-x)
 (require 'seq)
+(require 'map)
+(require 'logx)
 (require 'mcpkit)
 (require 'orderless nil t)
 
@@ -210,8 +212,12 @@ signaling an error."
                        (append raw-tools nil))))))
             (kill-buffer buf))))
     (error
-     (message "mcpkit-search: failed to probe proxy target %s on port %d: %s"
-              target-id port (error-message-string err))
+     (logx-warn :cat 'mcpkit-search
+                :msg (format "Failed to probe proxy target %s on port %d: %s"
+                             target-id port (error-message-string err))
+                :target target-id
+                :port port
+                :error (error-message-string err))
      nil)))
 
 (defun mcpkit-search--get-proxy-tools ()
@@ -496,6 +502,50 @@ required parameters; otherwise return (or pass to DONE) the tool's content."
       (:type "string" :description "Optional proxy target id to route the call to"))
      :required ["name"])
    :handler #'mcpkit-search-invoke-tool-handler
+   :decode #'mcpkit-search--keep-args
+   :service 'core))
+
+;;; Synthetic `discover_services' Definition
+
+(defun mcpkit-search-discover-services-handler (_args &optional done)
+  "Return high-level catalog of active services and tool counts."
+  (let* ((active (seq-map (lambda (e) (if (consp e) (car e) e))
+                          (and (boundp 'mcpkit--active-services) mcpkit--active-services)))
+         (registered (and (boundp 'mcpkit-registry) (seq-map #'cdr mcpkit-registry)))
+         (seen (make-hash-table :test #'equal))
+         (services nil))
+    (dolist (svc (or active registered))
+      (when (and svc (mcpkit-service-p svc))
+        (let ((sname (symbol-name (mcpkit-service-name svc))))
+          (unless (map-elt seen sname)
+            (setf (map-elt seen sname) t)
+            (push svc services)))))
+    (setq services (nreverse services))
+    (let* ((entries (mapcar (lambda (svc)
+                              (list :service (symbol-name (mcpkit-service-name svc))
+                                    :description (or (mcpkit-service-description svc) "")
+                                    :tool_count (hash-table-count (mcpkit-service-tools svc))
+                                    :port (mcpkit-service-port svc)))
+                            services))
+           (text (if entries
+                     (mapconcat (lambda (e)
+                                  (format "- %s (%d tools): %s"
+                                          (plist-get e :service)
+                                          (plist-get e :tool_count)
+                                          (plist-get e :description)))
+                                entries "\n")
+                   "No services currently registered."))
+           (res (list :content (vector (list :type "text" :text text))
+                      :services (vconcat entries))))
+      (if done (funcall done nil res) res))))
+
+(defun mcpkit-search-make-discover-services-tool ()
+  "Construct the synthetic `discover_services' `mcpkit-tool' definition."
+  (make-mcpkit-tool
+   :name "discover_services"
+   :description "Discover available MCP services, their capabilities, and tool counts without dumping individual schemas."
+   :input-schema '(:type "object" :properties #s(hash-table test equal))
+   :handler #'mcpkit-search-discover-services-handler
    :decode #'mcpkit-search--keep-args
    :service 'core))
 

@@ -21,9 +21,14 @@
       (should (mcpkit-service-p svc))
       (should (eq (mcpkit-service-name svc) 'emacs))
       (let ((tools (mcpkit-service-tools svc)))
-        (should (gethash "emacs_server_status" tools))
-        (should (gethash "emacs_get_buffer" tools))
-        (should (gethash "emacs_eval" tools))))))
+        (should (map-elt tools "emacs_server_status"))
+        (should (map-elt tools "emacs_get_buffer"))
+        (should (map-elt tools "emacs_eval"))
+        (should (map-elt tools "emacs_list_buffers"))
+        (should (map-elt tools "emacs_kill_buffer"))
+        (should (map-elt tools "emacs_save_buffer"))
+        (should (map-elt tools "emacs_revert_buffer"))
+        (should (map-elt tools "emacs_get_messages"))))))
 
 (ert-deftest test-mcpkit-emacs/eval-and-buffer ()
   "Test evaluation and buffer inspection."
@@ -113,6 +118,63 @@
         (with-current-buffer buffer (set-buffer-modified-p nil))
         (kill-buffer buffer))
       (delete-file file))))
+
+(ert-deftest test-mcpkit-emacs/buffer-lifecycle-tools ()
+  "Test emacs_list_buffers, emacs_save_buffer, emacs_revert_buffer, and emacs_kill_buffer."
+  (let* ((file (make-temp-file "mcpkit-buf-test-"))
+         (svc (mcpkit-emacs-register))
+         (tools (mcpkit-service-tools svc))
+         (list-tool (map-elt tools "emacs_list_buffers"))
+         (save-tool (map-elt tools "emacs_save_buffer"))
+         (revert-tool (map-elt tools "emacs_revert_buffer"))
+         (kill-tool (map-elt tools "emacs_kill_buffer")))
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert "initial text"))
+          (let ((buf (find-file-noselect file)))
+            ;; Test list_buffers
+            (let (res)
+              (funcall (mcpkit-tool-handler list-tool) nil (lambda (_status r) (setq res r)))
+              (should (vectorp res))
+              (should (seq-some (lambda (b) (equal (plist-get b :name) (buffer-name buf))) res)))
+
+            ;; Modify buffer and save_buffer
+            (with-current-buffer buf
+              (goto-char (point-max))
+              (insert " modified"))
+            (let (res)
+              (funcall (mcpkit-tool-handler save-tool) (list :buffer (buffer-name buf))
+                       (lambda (_status r) (setq res r)))
+              (should (equal (plist-get res :status) "ok")))
+            (should (equal (with-temp-buffer (insert-file-contents file) (buffer-string))
+                           "initial text modified"))
+
+            ;; Modify disk file and revert_buffer
+            (with-temp-file file (insert "disk changes"))
+            (let (res)
+              (funcall (mcpkit-tool-handler revert-tool) (list :buffer (buffer-name buf))
+                       (lambda (_status r) (setq res r)))
+              (should (equal (plist-get res :status) "ok")))
+            (should (equal (with-current-buffer buf (buffer-string)) "disk changes"))
+
+            ;; kill_buffer
+            (let (res)
+              (funcall (mcpkit-tool-handler kill-tool) (list :buffer (buffer-name buf))
+                       (lambda (_status r) (setq res r)))
+              (should (equal (plist-get res :status) "ok")))
+            (should-not (get-buffer (file-name-nondirectory file)))))
+      (delete-file file))))
+
+(ert-deftest test-mcpkit-emacs/get-messages-tool ()
+  "Test emacs_get_messages fetching trailing lines."
+  (let* ((svc (mcpkit-emacs-register))
+         (tool (map-elt (mcpkit-service-tools svc) "emacs_get_messages"))
+         res)
+    (message "mcpkit-test-marker-12345")
+    (funcall (mcpkit-tool-handler tool) (list :tail_lines 10) (lambda (_status r) (setq res r)))
+    (should (equal (plist-get res :buffer) "*Messages*"))
+    (should (plist-get res :exists))
+    (should (string-search "mcpkit-test-marker-12345" (plist-get res :text)))))
 
 (provide 'test-mcpkit-emacs)
 ;;; test-mcpkit-emacs.el ends here

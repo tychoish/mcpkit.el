@@ -22,6 +22,7 @@
 (require 'seq)
 (require 'ring)
 (require 'tabulated-list)
+(require 'logx)
 (require 'mcpkit)
 
 (defvar mcpkit-log-buffer-name)
@@ -216,6 +217,7 @@ REQ-ARGS is the argument payload passed to the tool."
   (when (y-or-n-p "Reset all MCPKit tool statistics? ")
     (mcpkit-stats-reset)
     (mcpkit-stats-refresh)
+    (logx-info :cat 'mcpkit-stats :msg "MCPKit tool statistics reset.")
     (message "MCPKit tool statistics reset.")))
 
 ;;;###autoload
@@ -379,21 +381,35 @@ When called interactively without argument, uses tool at point."
      ((and tool (functionp (mcpkit-tool-handler tool)) (symbolp (mcpkit-tool-handler tool)))
       (find-function-other-window (mcpkit-tool-handler tool)))
      (t
+      (logx-warn :cat 'mcpkit-stats :msg (format "No source file location recorded for tool %s" tname))
       (message "No source file location recorded for tool %s" tname)))))
 
 (defun mcpkit-stats-view-logs (&optional tool-name)
-  "Open `*mcpkit-logs*' and highlight or search for TOOL-NAME entries."
+  "Open filtered log viewer for TOOL-NAME using logx-view or `*mcpkit-logs*'."
   (interactive (list (or (tabulated-list-get-id)
                          mcpkit-stats-detail--current-tool
                          (read-string "View logs for tool: "))))
-  (let* ((tname (or tool-name (tabulated-list-get-id) mcpkit-stats-detail--current-tool))
-         (log-buf (get-buffer-create (or mcpkit-log-buffer-name "*mcpkit-logs*"))))
-    (pop-to-buffer log-buf)
-    (when (and tname (not (string-empty-p tname)))
-      (goto-char (point-max))
-      (if (search-backward tname nil t)
-          (message "Found recent log entry for %s" tname)
-        (message "No log entries found for %s in %s" tname (buffer-name log-buf))))))
+  (let* ((tname (or tool-name (tabulated-list-get-id) mcpkit-stats-detail--current-tool)))
+    (if (and (require 'logx-view nil t) (fboundp 'logx-fork-filtered-buffer))
+        (let ((buf (logx-fork-filtered-buffer
+                    (format "mcpkit:%s" (or tname "all"))
+                    (lambda (ev)
+                      (let ((cat (format "%s" (or (plist-get ev :cat) "")))
+                            (tool (plist-get ev :tool)))
+                        (and (string-prefix-p "mcpkit" cat)
+                             (or (null tname) (string-empty-p tname)
+                                 (equal tool tname))))))))
+          (pop-to-buffer buf))
+      (let ((log-buf (get-buffer-create (or mcpkit-log-buffer-name "*mcpkit-logs*"))))
+        (pop-to-buffer log-buf)
+        (when (and tname (not (string-empty-p tname)))
+          (goto-char (point-max))
+          (if (search-backward tname nil t)
+              (progn
+                (logx-info :cat 'mcpkit-stats :msg (format "Found recent log entry for %s" tname))
+                (message "Found recent log entry for %s" tname))
+            (logx-warn :cat 'mcpkit-stats :msg (format "No log entries found for %s in %s" tname (buffer-name log-buf)))
+            (message "No log entries found for %s in %s" tname (buffer-name log-buf))))))))
 
 (provide 'mcpkit-stats)
 

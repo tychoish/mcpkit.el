@@ -3,7 +3,7 @@
 ;; Author: sam kleinman <sam@tychoish.com>
 ;; Maintainer: sam kleinman <sam@tychoish.com>
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (web-server "0.1.2") (compat "30.0.0.0") (gen "0.1.0"))
+;; Package-Requires: ((emacs "29.1") (web-server "0.1.2") (compat "30.0.0.0") (gen "0.1.0") (logx "0.1.0"))
 ;; Keywords: comm, tools, mcp, rpc
 ;; URL: https://github.com/tychoish/mcpkit.el
 
@@ -23,10 +23,12 @@
 (require 'subr-x)
 (require 'map)
 (require 'seq)
+(require 'logx)
 (require 'web-server)
 
 (declare-function mcpkit-search-make-search-tool "mcpkit-search")
 (declare-function mcpkit-search-make-invoke-tool "mcpkit-search")
+(declare-function mcpkit-search-make-discover-services-tool "mcpkit-search")
 
 ;;; Default Encoders and Decoders
 
@@ -313,7 +315,7 @@ Tools are namespaced with service prefix if POLICY is \\='namespace."
   :type 'integer
   :group 'mcpkit)
 
-(defcustom mcpkit-search-pinned-tools '("search_tools" "invoke_tool")
+(defcustom mcpkit-search-pinned-tools '("search_tools" "invoke_tool" "discover_services")
   "List of tool names visible in `tools/list' when search gating is active."
   :type '(repeat string)
   :group 'mcpkit)
@@ -322,13 +324,15 @@ Tools are namespaced with service prefix if POLICY is \\='namespace."
   "Find `mcpkit-tool' with NAME string in ACTIVE-SERVICES."
   (or (seq-find (lambda (tool) (equal (mcpkit-tool-name tool) name))
                 (mcpkit--normalize-tools active-services))
-      (when (and (member name '("search_tools" "invoke_tool"))
+      (when (and (member name '("search_tools" "invoke_tool" "discover_services"))
                  (require 'mcpkit-search nil t))
         (cond
          ((equal name "search_tools")
           (mcpkit-search-make-search-tool))
-         (t
-          (mcpkit-search-make-invoke-tool))))))
+         ((equal name "invoke_tool")
+          (mcpkit-search-make-invoke-tool))
+         ((equal name "discover_services")
+          (mcpkit-search-make-discover-services-tool))))))
 
 ;;; MCP Protocol Handlers
 
@@ -363,7 +367,8 @@ A nil `:properties' would encode as null; encode it as an empty object."
          (effective-tools
           (if (not gated-p)
               tools
-            (let* ((pinned-names (or mcpkit-search-pinned-tools '("search_tools")))
+            (let* ((pinned-names (or mcpkit-search-pinned-tools
+                                     '("search_tools" "invoke_tool" "discover_services")))
                    (pinned (seq-filter (lambda (tool)
                                          (member (mcpkit-tool-name tool) pinned-names))
                                        tools))
@@ -374,7 +379,7 @@ A nil `:properties' would encode as null; encode it as an empty object."
                                                              (equal (mcpkit-tool-name tool) name))
                                                            pinned)))
                                    (mcpkit--find-tool name nil)))
-                               '("search_tools" "invoke_tool"))))
+                               '("search_tools" "invoke_tool" "discover_services"))))
               (append synthetic pinned))))
          (descriptors (vconcat
                        (seq-map (lambda (tool)
@@ -632,27 +637,28 @@ Matches both un-namespaced and namespaced tool names."
        (let* ((svc (car entry))
               (collision (cdr entry))
               (svc-name (symbol-name (mcpkit-service-name svc))))
-         (when (or (gethash name-str (mcpkit-service-tools svc))
+         (when (or (map-elt (mcpkit-service-tools svc) name-str)
                    (and (eq collision 'namespace)
                         (string-prefix-p (concat svc-name "__") name-str)
-                        (gethash (substring name-str (+ (length svc-name) 2))
-                                 (mcpkit-service-tools svc))))
+                        (map-elt (mcpkit-service-tools svc)
+                                 (substring name-str (+ (length svc-name) 2)))))
            svc)))
      services)))
 
 (defun mcpkit--log (status tool-name duration-ms err-msg &optional req-payload resp-payload)
   "Log request outcome STATUS, TOOL-NAME, DURATION-MS, and ERR-MSG.
 REQ-PAYLOAD and RESP-PAYLOAD are optional request and response payloads logged
-when `mcpkit-log-verbose' is non-nil."
-  (let* ((timestamp (format-time-string "%Y-%m-%d %H:%M:%S.%3N"))
-         (status-str (if (member status '(success ok "success" "OK")) "OK" "ERROR"))
-         (tool-str (if (and tool-name (not (string-empty-p (format "%s" tool-name))))
-                       (format "%s" tool-name)
-                     "-"))
-         (dur-val (or duration-ms 0.0))
-         (err-str (if (and err-msg (not (string-empty-p (format "%s" err-msg))))
-                      (format " [error: %s]" err-msg)
-                    ""))
+when `mcpkit-log-verbose' is non-nil.
+Emits structured `logx' events categorized by subsystem."
+  (let* ((dur-val (or duration-ms 0.0))
+         (is-ok (member status '(success ok "success" "OK")))
+         (tname (if (and tool-name (not (string-empty-p (format "%s" tool-name))))
+                    (format "%s" tool-name)
+                  "-"))
+         (err (and err-msg (not (string-empty-p (format "%s" err-msg))) (format "%s" err-msg)))
+         (timestamp (format-time-string "%Y-%m-%d %H:%M:%S.%3N"))
+         (status-str (if is-ok "OK" "ERROR"))
+         (err-str (if err (format " [error: %s]" err) ""))
          (req-str (if (and mcpkit-log-verbose req-payload)
                       (format " [req: %s]" (mcpkit--format-payload req-payload))
                     ""))
@@ -660,7 +666,7 @@ when `mcpkit-log-verbose' is non-nil."
                        (format " [resp: %s]" (mcpkit--format-payload resp-payload))
                      ""))
          (log-line (format "[%s] %s %s %.2fms%s%s%s\n"
-                           timestamp status-str tool-str dur-val err-str req-str resp-str))
+                           timestamp status-str tname dur-val err-str req-str resp-str))
          (main-buf (or mcpkit-log-buffer-name "*mcpkit-logs*"))
          (buf-names (list main-buf)))
     (when (and mcpkit-log-split-services tool-name)
@@ -672,7 +678,23 @@ when `mcpkit-log-verbose' is non-nil."
        (with-current-buffer (get-buffer-create buf-name)
          (goto-char (point-max))
          (insert log-line)))
-     (delete-dups buf-names))))
+     (delete-dups buf-names))
+    (if is-ok
+        (logx-info :cat 'mcpkit-tool
+                   :msg (format "Tool %s completed in %.2fms" tname dur-val)
+                   :tool tname
+                   :status "ok"
+                   :duration_ms dur-val
+                   :req req-payload
+                   :resp resp-payload)
+      (logx-error :cat 'mcpkit-tool
+                  :msg (format "Tool %s failed in %.2fms: %s" tname dur-val (or err "unknown error"))
+                  :tool tname
+                  :status "error"
+                  :duration_ms dur-val
+                  :error err
+                  :req req-payload
+                  :resp resp-payload))))
 
 (defun mcpkit--handle-request (request)
   "HTTP request handler called by `web-server' for REQUEST."
@@ -988,6 +1010,12 @@ new port."
         (ignore-errors
           (mcpkit-start-service svc-name :port target-port :on-collision on-collision))))
     (let ((active (mcpkit-active-port)))
+      (logx-info :cat 'mcpkit
+                 :msg (format "MCPKit active on port %s with %d services"
+                              active
+                              (length (and (boundp 'mcpkit--active-services) mcpkit--active-services)))
+                 :port active
+                 :services (length (and (boundp 'mcpkit--active-services) mcpkit--active-services)))
       (when (or debug-on-error init-file-debug)
         (message "[mcpkit]: active on port %s with %d services"
                  active (length (and (boundp 'mcpkit--active-services) mcpkit--active-services))))

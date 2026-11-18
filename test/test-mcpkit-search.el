@@ -203,6 +203,36 @@
       (should (string-match-p "echo_tool" text))
       (should (string-match-p "invoke_tool" text)))))
 
+(ert-deftest mcpkit-search-test-discover-services ()
+  "discover_services returns active/registered services and tool counts."
+  (let ((mcpkit--active-services (test-mcpkit-search--invoke-fixture)))
+    (let ((res (mcpkit-search-discover-services-handler nil)))
+      (should (plist-get res :services))
+      (let* ((svcs (append (plist-get res :services) nil))
+             (first-svc (car svcs)))
+        (should (equal (plist-get first-svc :service) "emacs"))
+        (should (= (plist-get first-svc :tool_count) 1))))))
+
+(ert-deftest mcpkit-search-test-gated-tools-list-pinned-tools ()
+  "Gated tools/list exposes search_tools, invoke_tool, and discover_services by default."
+  (let* ((svc (make-mcpkit-service--raw
+               :name 'test-svc
+               :port 8765
+               :tools (make-hash-table :test #'equal)))
+         (mcpkit-search-mode 'auto)
+         (mcpkit-search-threshold 0)
+         (mcpkit-search-pinned-tools '("search_tools" "invoke_tool" "discover_services")))
+    (dotimes (i 5)
+      (setf (map-elt (mcpkit-service-tools svc) (format "tool_%d" i))
+            (make-mcpkit-tool :name (format "tool_%d" i) :service 'test-svc)))
+    (let* ((resp (mcpkit--handle-tools-list 1 (list (cons svc 'error))))
+           (tools (plist-get (plist-get resp :result) :tools))
+           (names (mapcar (lambda (td) (plist-get td :name)) (append tools nil))))
+      (should (member "search_tools" names))
+      (should (member "invoke_tool" names))
+      (should (member "discover_services" names))
+      (should-not (member "tool_0" names)))))
+
 (provide 'test-mcpkit-search)
 
 ;;; test-mcpkit-search.el ends here

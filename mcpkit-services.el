@@ -20,6 +20,7 @@
 
 (require 'seq)
 (require 'subr-x)
+(require 'logx)
 (require 'mcpkit)
 (require 'gen)
 
@@ -91,7 +92,10 @@ concurrent instances never collide."
   "Require MODULE, logging instead of signaling when it cannot be loaded."
   (condition-case err
       (require module)
-    (error (message "[mcpkit]: skipping %s: %s" module (error-message-string err)))))
+    (error (logx-warn :cat 'mcpkit-service
+                      :msg (format "Skipping %s: %s" module (error-message-string err))
+                      :module module
+                      :error (error-message-string err)))))
 
 (defun mcpkit--register-emacs-editing-tools ()
   "Register editing tools on the `emacs' service when both are available."
@@ -115,7 +119,9 @@ runner handle, which cancels pending loads when called."
               (when on-done
                 (funcall on-done)))
    :on-error (lambda (err)
-               (message "[mcpkit]: load error: %S" err))))
+               (logx-error :cat 'mcpkit-service
+                           :msg (format "MCPKit load error: %s" (error-message-string err))
+                           :error (error-message-string err)))))
 
 ;;;###autoload
 (defun mcpkit-start-services-on-instance-port ()

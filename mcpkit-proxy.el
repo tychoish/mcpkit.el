@@ -35,6 +35,8 @@
 
 (require 'subr-x)
 (require 'seq)
+(require 'map)
+(require 'logx)
 (require 'url)
 (require 'mcpkit)
 
@@ -87,7 +89,7 @@ nil)', so real parsed headers commonly carry a leading nil cell.")
 ;;;###autoload
 (defun mcpkit-proxy-register-route (target-id port)
   "Register a routing rule mapping TARGET-ID to localhost:PORT."
-  (puthash target-id port mcpkit-proxy--routes))
+  (setf (map-elt mcpkit-proxy--routes target-id) port))
 
 ;;;###autoload
 (defun mcpkit-proxy-unregister-route (target-id)
@@ -97,7 +99,7 @@ nil)', so real parsed headers commonly carry a leading nil cell.")
 
 (defun mcpkit-proxy--route-port (target-id)
   "Return the backend port registered for TARGET-ID, or nil."
-  (and target-id (gethash target-id mcpkit-proxy--routes)))
+  (and target-id (map-elt mcpkit-proxy--routes target-id)))
 
 ;;;###autoload
 (defun mcpkit-proxy-list-routes ()
@@ -144,18 +146,22 @@ TIMEOUT specifies request timeout in seconds (default 1.0)."
                                  :input-schema (plist-get raw :inputSchema)
                                  :service (intern (format "proxy:%s" target-id))))
                               (append raw-tools nil))))
-                        (puthash target-id (cons (float-time) tools) mcpkit-proxy--route-catalogs)
+                        (setf (map-elt mcpkit-proxy--route-catalogs target-id)
+                              (cons (float-time) tools))
                         tools)))))
             (kill-buffer buf)))
       (error
-       (message "mcpkit-proxy: failed to fetch tools for target %s: %s"
-                target-id (error-message-string err))
+       (logx-warn :cat 'mcpkit-proxy
+                  :msg (format "Failed to fetch tools for target %s: %s"
+                               target-id (error-message-string err))
+                  :target target-id
+                  :error (error-message-string err))
        nil))))
 
 (defun mcpkit-proxy-get-cached-tools (target-id &optional max-age)
   "Return cached tools for TARGET-ID if younger than MAX-AGE seconds, else fetch."
   (let* ((ttl (or max-age mcpkit-proxy-catalog-cache-ttl))
-         (entry (gethash target-id mcpkit-proxy--route-catalogs))
+         (entry (map-elt mcpkit-proxy--route-catalogs target-id))
          (now (float-time)))
     (if (and entry (< (- now (car entry)) ttl))
         (cdr entry)
