@@ -690,28 +690,28 @@ Emits structured `logx' events categorized by subsystem."
          (goto-char (point-max))
          (insert log-line)))
      (delete-dups buf-names))
-    (if is-ok
-        (logx 'info
-              (format "Tool %s completed in %.2fms (in: %dB, out: %dB)" tname dur-val in-bytes out-bytes)
-              :cat 'mcpkit-tool
-              :tool tname
-              :status "ok"
-              :duration_ms dur-val
-              :input_bytes in-bytes
-              :output_bytes out-bytes
-              :req req-payload
-              :resp resp-payload)
-      (logx 'error
-            (format "Tool %s failed in %.2fms (in: %dB, out: %dB): %s" tname dur-val in-bytes out-bytes (or err "unknown error"))
-            :cat 'mcpkit-tool
-            :tool tname
-            :status "error"
-            :duration_ms dur-val
-            :error err
-            :input_bytes in-bytes
-            :output_bytes out-bytes
-            :req req-payload
-            :resp resp-payload))))
+    (condition-case nil
+        (if is-ok
+            (logx-info :cat 'mcpkit-tool
+                       :msg (format "Tool %s completed in %.2fms (in: %dB, out: %dB)" tname dur-val in-bytes out-bytes)
+                       :tool tname
+                       :status "ok"
+                       :duration_ms dur-val
+                       :input_bytes in-bytes
+                       :output_bytes out-bytes
+                       :req req-payload
+                       :resp resp-payload)
+          (logx-error :cat 'mcpkit-tool
+                      :msg (format "Tool %s failed in %.2fms (in: %dB, out: %dB): %s" tname dur-val in-bytes out-bytes (or err "unknown error"))
+                      :tool tname
+                      :status "error"
+                      :duration_ms dur-val
+                      :error err
+                      :input_bytes in-bytes
+                      :output_bytes out-bytes
+                      :req req-payload
+                      :resp resp-payload))
+      (error nil))))
 
 (defun mcpkit--handle-request (request)
   "HTTP request handler called by `web-server' for REQUEST."
@@ -721,22 +721,30 @@ Emits structured `logx' events categorized by subsystem."
      body
      mcpkit--active-services
      (lambda (status response-payload tool-name duration-ms err-msg &optional req-payload resp-payload)
-       (if (eq status 'notification)
-           (progn
-             (ws-response-header proc 202
-                                 '("Connection" . "close")
-                                 (cons "Content-Length" "0"))
-             (mcpkit--log status tool-name duration-ms err-msg (or req-payload body) ""))
-         (let* ((json-str (if (stringp response-payload)
-                              response-payload
-                            (mcpkit--serialize-response response-payload)))
-                (bytes (string-bytes json-str)))
-           (ws-response-header proc 200
-                               '("Content-Type" . "application/json; charset=utf-8")
-                               '("Connection" . "close")
-                               (cons "Content-Length" (number-to-string bytes)))
-           (process-send-string proc json-str)
-           (mcpkit--log status tool-name duration-ms err-msg (or req-payload body) (or resp-payload json-str))))))))
+       (condition-case send-err
+           (if (eq status 'notification)
+               (progn
+                 (when (and (processp proc) (process-live-p proc))
+                   (ws-response-header proc 202
+                                       '("Connection" . "close")
+                                       (cons "Content-Length" "0")))
+                 (mcpkit--log status tool-name duration-ms err-msg (or req-payload body) ""))
+             (let* ((json-str (if (stringp response-payload)
+                                  response-payload
+                                (mcpkit--serialize-response response-payload)))
+                    (bytes (string-bytes json-str)))
+               (when (and (processp proc) (process-live-p proc))
+                 (ws-response-header proc 200
+                                     '("Content-Type" . "application/json; charset=utf-8")
+                                     '("Connection" . "close")
+                                     (cons "Content-Length" (number-to-string bytes)))
+                 (process-send-string proc json-str))
+               (mcpkit--log status tool-name duration-ms err-msg (or req-payload body) (or resp-payload json-str))))
+         (error
+          (ignore-errors
+            (mcpkit--log 'error tool-name duration-ms
+                         (format "Client send error: %s" (error-message-string send-err))
+                         (or req-payload body) nil))))))))
 
 ;;;###autoload
 (cl-defun mcpkit-start-service (name-or-service &key (on-collision 'namespace) port)

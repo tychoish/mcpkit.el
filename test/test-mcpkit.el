@@ -645,7 +645,7 @@
 
 (ert-deftest mcpkit-test-standard-reporting ()
   "Verify standard reporting metrics (tool name, input/output size, duration) in mcpkit--log."
-  (mcpkit-test-with-clean-state
+  (mcpkit-test--with-clean-env
     (let ((logx-events nil)
           (test-buf (get-buffer-create "*test-mcpkit-reporting*")))
       (unwind-protect
