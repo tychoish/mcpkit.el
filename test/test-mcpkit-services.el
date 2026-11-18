@@ -2,6 +2,7 @@
 
 (require 'ert)
 (require 'cl-lib)
+(require 'logx)
 (require 'mcpkit-services)
 
 (defmacro mcpkit-services-test--with-bound-port (var port &rest body)
@@ -81,10 +82,17 @@
 
 (ert-deftest mcpkit-services-test-missing-module-is-logged-not-fatal ()
   "A module that cannot load is reported and skipped."
-  (let ((msgs nil))
-    (cl-letf (((symbol-function 'message)
-               (lambda (fmt &rest args) (push (apply #'format fmt args) msgs))))
+  (let ((events nil)
+        (logx-default-level 'info)
+        (logx-category-levels nil))
+    (cl-letf (((symbol-function 'logx--emit-event)
+               (lambda (level category msg _source _data)
+                 (push (list :lvl level :cat category :msg msg) events))))
       (mcpkit--require-module 'mcpkit-no-such-module))
-    (should (string-match-p "skipping mcpkit-no-such-module" (car msgs)))))
+    (should events)
+    (let ((ev (car events)))
+      (should (eq (plist-get ev :lvl) 'warn))
+      (should (eq (plist-get ev :cat) 'mcpkit-service))
+      (should (string-match-p "Skipping mcpkit-no-such-module" (plist-get ev :msg))))))
 
 ;;; test-mcpkit-services.el ends here

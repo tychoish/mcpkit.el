@@ -587,7 +587,7 @@
       (mcpkit--log 'error nil 5.0 "Something went wrong")
       (with-current-buffer buf
         (let ((log-text (buffer-string)))
-          (should (string-match-p "ERROR - 5\\.00ms \\[error: Something went wrong\\]" log-text)))))
+          (should (string-match-p "ERROR - 5\\.00ms (in: 0B, out: 0B) \\[error: Something went wrong\\]" log-text)))))
 
     ;; 3. Verbose logging toggle
     (let ((buf (get-buffer-create "*mcpkit-logs*")))
