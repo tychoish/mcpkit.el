@@ -24,6 +24,7 @@
 (require 'dired)
 (require 'projectile nil t)
 (require 'mcpkit)
+(require 'mcpkit-stats)
 
 (declare-function projectile-project-root "projectile" (&optional dir))
 (declare-function projectile-project-files "projectile" (project-root))
@@ -159,9 +160,9 @@
           (list :status "ok" :buffer (buffer-name)
                 :file (or buffer-file-name "")))))))
 
-;; 3. emacs_eval
-(mcpkit-register-tool 'emacs_eval 'emacs
-  :description "Safely evaluate an Emacs Lisp expression string with prompt suppression."
+;; 3. eval (formerly emacs_eval; see `mcpkit-tool-aliases')
+(mcpkit-register-tool 'eval 'emacs
+  :description "Last resort: evaluates arbitrary Emacs Lisp. Prefer a specific tool (use search_tools first); if you find yourself repeating a pattern here, it should be a tool."
   :input-schema '(:type "object"
                   :properties (:expression (:type "string" :description "Emacs Lisp code to evaluate"))
                   :required ["expression"])
@@ -477,13 +478,6 @@
                 buffers))))
     (vconcat (nreverse buffers))))
 
-(mcpkit-register-tool 'mcp_buffer_list 'emacs
-  :description "Alias for emacs_list_buffers."
-  :input-schema '(:type "object" :properties () :required [])
-  :async t
-  (let* ((service (mcpkit-get-service 'emacs))
-         (tool (map-elt (mcpkit-service-tools service) "emacs_list_buffers")))
-    (funcall (mcpkit-tool-handler tool) args done)))
 
 ;; 11. emacs_kill_buffer
 (mcpkit-register-tool 'emacs_kill_buffer 'emacs
@@ -500,15 +494,6 @@
       (kill-buffer buf)
       (list :status "ok" :killed name))))
 
-(mcpkit-register-tool 'mcp_buffer_kill 'emacs
-  :description "Alias for emacs_kill_buffer."
-  :input-schema '(:type "object"
-                  :properties (:buffer (:type "string" :description "Buffer name or visited file path"))
-                  :required ["buffer"])
-  :async t
-  (let* ((service (mcpkit-get-service 'emacs))
-         (tool (map-elt (mcpkit-service-tools service) "emacs_kill_buffer")))
-    (funcall (mcpkit-tool-handler tool) args done)))
 
 ;; 12. emacs_save_buffer
 (mcpkit-register-tool 'emacs_save_buffer 'emacs
@@ -528,15 +513,6 @@
             (list :status "ok" :saved (buffer-name buf) :file (buffer-file-name buf)))
         (list :status "error" :error "Buffer is not visiting a file" :buffer (buffer-name buf))))))
 
-(mcpkit-register-tool 'mcp_buffer_save 'emacs
-  :description "Alias for emacs_save_buffer."
-  :input-schema '(:type "object"
-                  :properties (:buffer (:type "string" :description "Buffer name or visited file path"))
-                  :required ["buffer"])
-  :async t
-  (let* ((service (mcpkit-get-service 'emacs))
-         (tool (map-elt (mcpkit-service-tools service) "emacs_save_buffer")))
-    (funcall (mcpkit-tool-handler tool) args done)))
 
 ;; 13. emacs_revert_buffer
 (mcpkit-register-tool 'emacs_revert_buffer 'emacs
@@ -556,15 +532,6 @@
             (list :status "ok" :reverted (buffer-name buf) :file (buffer-file-name buf)))
         (list :status "error" :error "Buffer is not visiting a file" :buffer (buffer-name buf))))))
 
-(mcpkit-register-tool 'mcp_buffer_revert 'emacs
-  :description "Alias for emacs_revert_buffer."
-  :input-schema '(:type "object"
-                  :properties (:buffer (:type "string" :description "Buffer name or visited file path"))
-                  :required ["buffer"])
-  :async t
-  (let* ((service (mcpkit-get-service 'emacs))
-         (tool (map-elt (mcpkit-service-tools service) "emacs_revert_buffer")))
-    (funcall (mcpkit-tool-handler tool) args done)))
 
 ;; 14. emacs_get_messages
 (mcpkit-register-tool 'emacs_get_messages 'emacs
@@ -588,15 +555,22 @@
                 :lines (vconcat lines)
                 :text (string-join lines "\n")))))))
 
-(mcpkit-register-tool 'mcp_get_messages 'emacs
-  :description "Alias for emacs_get_messages."
+
+;; 15. mcpkit_stats
+(mcpkit-register-tool 'mcpkit_stats 'emacs
+  :description "Return per-tool call statistics (calls, errors, average latency, last run, usage score, pin status, top argument digests), busiest first, plus persistence info and the usage-pinned tools."
   :input-schema '(:type "object"
-                  :properties (:buffer (:type "string") :tail_lines (:type "integer"))
+                  :properties (:tool (:type "string" :description "Only this tool (name, unprefixed name, or alias)")
+                               :limit (:type "integer" :description "Maximum number of rows to return"))
                   :required [])
-  :async t
-  (let* ((service (mcpkit-get-service 'emacs))
-         (tool (map-elt (mcpkit-service-tools service) "emacs_get_messages")))
-    (funcall (mcpkit-tool-handler tool) args done)))
+  (let* ((rows (mcpkit-stats-rows (plist-get args :tool) (plist-get args :limit)))
+         (info (mcpkit-stats-persistence-info)))
+    (list :count (length rows)
+          :persisted (plist-get info :persisted)
+          :last_saved (plist-get info :last-saved)
+          :usage_pins (vconcat (mcpkit--usage-pin-names
+                                (mcpkit--normalize-tools mcpkit--active-services)))
+          :rows (vconcat rows))))
 
 ;;;###autoload
 (defun mcpkit-emacs-register ()
