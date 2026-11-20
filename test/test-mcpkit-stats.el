@@ -135,6 +135,17 @@
         (should (string-match-p "Connection timeout" content))
         (should (string-match-p "arguments: (:timeout 5)" content))))))
 
+(ert-deftest mcpkit-stats-test-hidden-tools-omitted-from-list ()
+  "Gateway tools are recorded but not listed."
+  (mcpkit-stats-test--isolated
+    (mcpkit-stats-record-call "invoke_tool" 'success 1.0)
+    (mcpkit-stats-record-call "real_tool" 'success 1.0)
+    (let ((mcpkit--active-services nil))
+      (should (equal (mapcar #'car (mcpkit-stats-tabulated-entries)) '("real_tool")))
+      (should (= (mcpkit-stats-record-call-count (mcpkit-stats-get "invoke_tool")) 1))
+      (let ((mcpkit-stats-hidden-tools nil))
+        (should (= (length (mcpkit-stats-tabulated-entries)) 2))))))
+
 (provide 'test-mcpkit-stats)
 
 ;;; test-mcpkit-stats.el ends here

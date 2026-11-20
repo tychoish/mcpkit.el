@@ -57,6 +57,15 @@
   (source-file nil :type (or null string))
   (source-line nil :type (or null integer)))
 
+(defcustom mcpkit-stats-hidden-tools
+  '("search_tools" "invoke_tool" "discover_services")
+  "Tool names omitted from the statistics list.
+These are the synthetic gateway tools.  Calls made through `invoke_tool' are
+also recorded under the target tool's own name, so listing the gateway would
+double count them.  Records are still collected, only the display hides them."
+  :type '(repeat string)
+  :group 'mcpkit)
+
 (defvar mcpkit-stats--table (make-hash-table :test #'equal)
   "Hash table mapping tool-name strings to `mcpkit-stats-record' instances.")
 
@@ -174,29 +183,30 @@ REQ-ARGS is the argument payload passed to the tool."
     (maphash
      (lambda (tname rec)
        (puthash tname t seen)
-       (let* ((calls (mcpkit-stats-record-call-count rec))
-              (succ (mcpkit-stats-record-success-count rec))
-              (errs (mcpkit-stats-record-error-count rec))
-              (err-pct (if (> calls 0) (* (/ (float errs) calls) 100.0) 0.0))
-              (avg-dur (if (> calls 0) (/ (mcpkit-stats-record-total-duration-ms rec) calls) 0.0))
-              (svc (or (mcpkit-stats-record-service rec) "-"))
-              (last-run (or (mcpkit-stats-record-last-called-at rec) "never")))
-         (push (list tname
-                     (vector tname
-                             (format "%s" svc)
-                             (number-to-string calls)
-                             (number-to-string succ)
-                             (number-to-string errs)
-                             (format "%.1f%%" err-pct)
-                             (format "%.2f" avg-dur)
-                             last-run))
-               entries)))
+       (unless (member tname mcpkit-stats-hidden-tools)
+         (let* ((calls (mcpkit-stats-record-call-count rec))
+                (succ (mcpkit-stats-record-success-count rec))
+                (errs (mcpkit-stats-record-error-count rec))
+                (err-pct (if (> calls 0) (* (/ (float errs) calls) 100.0) 0.0))
+                (avg-dur (if (> calls 0) (/ (mcpkit-stats-record-total-duration-ms rec) calls) 0.0))
+                (svc (or (mcpkit-stats-record-service rec) "-"))
+                (last-run (or (mcpkit-stats-record-last-called-at rec) "never")))
+           (push (list tname
+                       (vector tname
+                               (format "%s" svc)
+                               (number-to-string calls)
+                               (number-to-string succ)
+                               (number-to-string errs)
+                               (format "%.1f%%" err-pct)
+                               (format "%.2f" avg-dur)
+                               last-run))
+                 entries))))
      mcpkit-stats--table)
     ;; Next include registered tools that haven't been invoked yet
     (when (boundp 'mcpkit--active-services)
       (dolist (tool (mcpkit--normalize-tools mcpkit--active-services))
         (let ((tname (mcpkit-tool-name tool)))
-          (unless (gethash tname seen)
+          (unless (or (gethash tname seen) (member tname mcpkit-stats-hidden-tools))
             (puthash tname t seen)
             (push (list tname
                         (vector tname
