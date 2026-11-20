@@ -11,6 +11,7 @@
 (ert-deftest mcpkit-search-test-e2e-gating-and-stats-over-http ()
   "Test end-to-end search transform gating, HTTP search_tools call, and stats tracking."
   (let ((mcpkit-registry nil)
+        (mcpkit-stats--table (make-hash-table :test #'equal))
         (mcpkit--active-services nil)
         (mcpkit--active-server nil)
         (mcpkit-log-verbose nil)

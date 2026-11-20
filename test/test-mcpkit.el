@@ -2,11 +2,15 @@
 
 (require 'ert)
 (require 'mcpkit)
+(require 'mcpkit-stats)
 
 (defmacro mcpkit-test--with-clean-env (&rest body)
-  "Run BODY with clean `mcpkit-registry' and `mcpkit--active-services'."
+  "Run BODY with clean `mcpkit-registry' and `mcpkit--active-services'.
+Also binds a private `mcpkit-stats--table' so tool calls made by tests are
+not recorded in the live session's statistics."
   (declare (indent 0))
   `(let ((mcpkit-registry nil)
+         (mcpkit-stats--table (make-hash-table :test #'equal))
          (mcpkit--active-services nil)
          (mcpkit--active-server nil)
          (mcpkit--active-port nil)
