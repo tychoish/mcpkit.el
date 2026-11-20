@@ -26,7 +26,9 @@
 (require 'logx)
 (require 'web-server)
 
-(declare-function mcpkit-search-make-search-tool "mcpkit-search")
+(defvar mcpkit--active-services)
+
+(declare-function mcpkit-search-make-search-tool "mcpkit-search" (&optional active-services))
 (declare-function mcpkit-search-make-invoke-tool "mcpkit-search")
 (declare-function mcpkit-search-make-discover-services-tool "mcpkit-search")
 
@@ -320,6 +322,194 @@ Tools are namespaced with service prefix if POLICY is \\='namespace."
   :type '(repeat string)
   :group 'mcpkit)
 
+;;; Tool Name Resolution
+
+(defcustom mcpkit-search-pinned-services nil
+  "List of service symbols whose tools are all pinned in gated `tools/list'.
+Applies in addition to `mcpkit-search-pinned-tools'."
+  :type '(repeat symbol)
+  :group 'mcpkit)
+
+(defcustom mcpkit-tool-aliases
+  '(("emacs_eval" . "eval")
+    ("mcp_buffer_list" . "emacs_list_buffers")
+    ("mcp_buffer_kill" . "emacs_kill_buffer")
+    ("mcp_buffer_save" . "emacs_save_buffer")
+    ("mcp_buffer_revert" . "emacs_revert_buffer")
+    ("mcp_get_messages" . "emacs_get_messages"))
+  "Alist mapping OLD-NAME to CURRENT-NAME for renamed or removed tools.
+Aliases are consulted only by `mcpkit-resolve-tool-name' (and so by
+`invoke_tool', `tools/call' and pinning).  They are never registered as
+tools, so they do not appear in search results or `tools/list'.  Either
+name may be given with or without its `<service>__' prefix."
+  :type '(alist :key-type string :value-type string)
+  :group 'mcpkit)
+
+(defun mcpkit-register-tool-alias (old new)
+  "Make tool name OLD resolve to tool name NEW.
+Replaces an existing alias for OLD.  Return the updated
+`mcpkit-tool-aliases'."
+  (setf (alist-get old mcpkit-tool-aliases nil nil #'equal) new)
+  mcpkit-tool-aliases)
+
+(defconst mcpkit--gateway-tool-names '("search_tools" "invoke_tool" "discover_services")
+  "Names of the synthetic gateway tools.")
+
+(defun mcpkit--tool-name-candidates (name tools)
+  "Return exposed names in TOOLS that NAME uniquely denotes without aliases.
+A list with one element is an exact (or unambiguous unprefixed) match; more
+than one means NAME is ambiguous.  TOOLS is a list of `mcpkit-tool'."
+  (if (seq-some (lambda (tool) (equal (mcpkit-tool-name tool) name)) tools)
+      (list name)
+    (let (found)
+      (dolist (tool tools)
+        (let ((svc (mcpkit-tool-service tool)))
+          (when (and svc (equal (mcpkit-tool-name tool) (format "%s__%s" svc name)))
+            (push (mcpkit-tool-name tool) found))))
+      (nreverse found))))
+
+(defun mcpkit--alias-target (name)
+  "Return the alias target for NAME, trying it without a service prefix too."
+  (or (cdr (assoc name mcpkit-tool-aliases))
+      (and (string-match "\\`[^_][^ ]*?__\\(.+\\)\\'" name)
+           (cdr (assoc (match-string 1 name) mcpkit-tool-aliases)))))
+
+(defun mcpkit--resolve-in-tools (name tools)
+  "Resolve NAME against TOOLS (list of `mcpkit-tool'), or return nil.
+Return nil if NAME is unknown or ambiguous."
+  (let ((depth 0)
+        (current name)
+        (result nil)
+        (done nil))
+    (while (and (not done) (<= depth 8))
+      (let ((cands (mcpkit--tool-name-candidates current tools)))
+        (cond
+         ((= (length cands) 1) (setq result (car cands) done t))
+         ((cdr cands) (setq done t))
+         ((member current mcpkit--gateway-tool-names) (setq result current done t))
+         (t (let ((target (mcpkit--alias-target current)))
+              (if target
+                  (setq current target depth (1+ depth))
+                (setq done t)))))))
+    result))
+
+(defun mcpkit-resolve-tool-name (name &optional active-services)
+  "Return the canonical exposed tool name for NAME, or nil.
+NAME may be the exact (namespaced) name, an unprefixed name that uniquely
+maps to one tool via the `<service>__<name>' rule, or an entry of
+`mcpkit-tool-aliases'.  ACTIVE-SERVICES defaults to
+`mcpkit--active-services'.  Ambiguous names resolve to nil."
+  (when (and (stringp name) (not (string-empty-p name)))
+    (mcpkit--resolve-in-tools
+     name (mcpkit--normalize-tools (or active-services mcpkit--active-services)))))
+
+(defcustom mcpkit-search-pinned-by-usage t
+  "When non-nil, also pin the most used tools in gated `tools/list'.
+Usage comes from `mcpkit-stats' (decayed call score).  With no recorded
+usage nothing extra is pinned.  The set is a snapshot, see
+`mcpkit-search-refresh-usage-pins'."
+  :type 'boolean
+  :group 'mcpkit)
+
+(defcustom mcpkit-search-pinned-usage-limit 8
+  "Maximum number of tools pinned by usage."
+  :type 'integer
+  :group 'mcpkit)
+
+(defcustom mcpkit-search-pinned-usage-min-calls 5
+  "Minimum raw call count before a tool may be pinned by usage."
+  :type 'integer
+  :group 'mcpkit)
+
+(defcustom mcpkit-search-pinned-usage-exclude
+  '("search_tools" "invoke_tool" "discover_services" "eval" "emacs__eval")
+  "Tool names never pinned by usage.
+Names in `mcpkit-stats-hidden-tools' are excluded as well.  Entries may be
+bare, namespaced or aliased names."
+  :type '(repeat string)
+  :group 'mcpkit)
+
+(defvar mcpkit--usage-pins nil
+  "Snapshot of usage pins as (ACTIVE-SERVICES . NAMES), or nil when stale.
+Computed lazily by `mcpkit--usage-pin-names' and kept so that the tool
+list stays stable (a changing list invalidates client prompt caches).")
+
+(defvar mcpkit--catalog-snapshot nil
+  "Snapshot of the `search_tools' service catalog as (ACTIVE-SERVICES . STRING).
+Nil when stale.  See `mcpkit-search--catalog'.")
+
+(declare-function mcpkit-stats-usage-entries "mcpkit-stats")
+
+(defun mcpkit--invalidate-snapshots ()
+  "Discard the cached usage pins and `search_tools' catalog."
+  (setq mcpkit--usage-pins nil
+        mcpkit--catalog-snapshot nil))
+
+(defun mcpkit--compute-usage-pins (tools)
+  "Return the names of TOOLS that qualify for usage pinning, best first.
+Ranks by decayed score, ties by name, honoring the
+`mcpkit-search-pinned-usage-*' options."
+  (when (and mcpkit-search-pinned-by-usage
+             (> mcpkit-search-pinned-usage-limit 0)
+             (require 'mcpkit-stats nil t)
+             (fboundp 'mcpkit-stats-usage-entries))
+    (let* ((names (mapcar #'mcpkit-tool-name tools))
+           (excluded (append
+                      mcpkit-search-pinned-usage-exclude
+                      (and (boundp 'mcpkit-stats-hidden-tools) mcpkit-stats-hidden-tools)))
+           (excluded (append excluded
+                             (delq nil (mapcar (lambda (n) (mcpkit--resolve-in-tools n tools))
+                                               excluded))))
+           (cands nil))
+      (dolist (entry (mcpkit-stats-usage-entries))
+        (let ((name (nth 0 entry)))
+          (when (and (>= (nth 1 entry) mcpkit-search-pinned-usage-min-calls)
+                     (> (nth 2 entry) 0)
+                     (member name names)
+                     (not (member name excluded)))
+            (push (cons name (nth 2 entry)) cands))))
+      (mapcar #'car
+              (seq-take (sort cands (lambda (a b)
+                                      (or (> (cdr a) (cdr b))
+                                          (and (= (cdr a) (cdr b))
+                                               (string< (car a) (car b))))))
+                        mcpkit-search-pinned-usage-limit)))))
+
+(defun mcpkit--usage-pin-names (tools &optional services)
+  "Return the snapshot of usage-pinned names for TOOLS.
+SERVICES is the active services list the snapshot is keyed on; it defaults
+to `mcpkit--active-services'.  The snapshot is computed on first use and
+reused until `mcpkit--invalidate-snapshots' or the services list changes."
+  (let ((key (or services mcpkit--active-services)))
+    (unless (and mcpkit--usage-pins (eq (car mcpkit--usage-pins) key))
+      (setq mcpkit--usage-pins (cons key (mcpkit--compute-usage-pins tools))))
+    (cdr mcpkit--usage-pins)))
+
+(defun mcpkit--tool-pin-kind (tool tools usage-pins)
+  "Return how TOOL is pinned: \"static\", \"service\", \"usage\" or nil.
+TOOLS is the full tool list used to resolve pinned names; USAGE-PINS the
+usage snapshot."
+  (let* ((name (mcpkit-tool-name tool))
+         (pinned-names (or mcpkit-search-pinned-tools mcpkit--gateway-tool-names)))
+    (cond
+     ((or (member name pinned-names)
+          (seq-some (lambda (n) (equal (mcpkit--resolve-in-tools n tools) name))
+                    pinned-names))
+      "static")
+     ((memq (mcpkit-tool-service tool) mcpkit-search-pinned-services) "service")
+     ((member name usage-pins) "usage")
+     (t nil))))
+
+(defun mcpkit-search-pin-kind (name &optional active-services)
+  "Return how the tool named NAME is pinned in gated `tools/list'.
+The value is \"static\", \"service\", \"usage\" or nil.  ACTIVE-SERVICES
+defaults to `mcpkit--active-services'."
+  (let* ((tools (mcpkit--normalize-tools (or active-services mcpkit--active-services)))
+         (tool (or (seq-find (lambda (x) (equal (mcpkit-tool-name x) name)) tools)
+                   (make-mcpkit-tool :name name))))
+    (mcpkit--tool-pin-kind tool tools
+                           (mcpkit--usage-pin-names tools active-services))))
+
 (defun mcpkit--find-tool (name active-services)
   "Find `mcpkit-tool' with NAME string in ACTIVE-SERVICES."
   (or (seq-find (lambda (tool) (equal (mcpkit-tool-name tool) name))
@@ -328,7 +518,7 @@ Tools are namespaced with service prefix if POLICY is \\='namespace."
                  (require 'mcpkit-search nil t))
         (cond
          ((equal name "search_tools")
-          (mcpkit-search-make-search-tool))
+          (mcpkit-search-make-search-tool active-services))
          ((equal name "invoke_tool")
           (mcpkit-search-make-invoke-tool))
          ((equal name "discover_services")
@@ -368,18 +558,20 @@ A nil `:properties' would encode as null; encode it as an empty object."
           (if (not gated-p)
               tools
             (let* ((pinned-names (or mcpkit-search-pinned-tools
-                                     '("search_tools" "invoke_tool" "discover_services")))
-                   (pinned (seq-filter (lambda (tool)
-                                         (member (mcpkit-tool-name tool) pinned-names))
-                                       tools))
+                                     mcpkit--gateway-tool-names))
+                   (usage-pins (mcpkit--usage-pin-names tools active-tools))
+                   (pinned (seq-filter
+                            (lambda (tool)
+                              (mcpkit--tool-pin-kind tool tools usage-pins))
+                            tools))
                    (synthetic (seq-keep
                                (lambda (name)
                                  (when (and (member name pinned-names)
                                             (not (seq-some (lambda (tool)
                                                              (equal (mcpkit-tool-name tool) name))
                                                            pinned)))
-                                   (mcpkit--find-tool name nil)))
-                               '("search_tools" "invoke_tool" "discover_services"))))
+                                   (mcpkit--find-tool name active-tools)))
+                               mcpkit--gateway-tool-names)))
               (append synthetic pinned))))
          (descriptors (vconcat
                        (seq-map (lambda (tool)
@@ -460,11 +652,21 @@ nested structures."
 Functions are called with five arguments:
 TOOL-NAME STATUS DURATION-MS ERR-MSG ARGUMENTS.")
 
+(defun mcpkit--canonical-call-name (name active-services)
+  "Return the canonical name for a tools/call NAME on ACTIVE-SERVICES.
+Return NAME unchanged when it is not a string, already names a tool, or
+cannot be resolved."
+  (if (and (stringp name) active-services
+           (not (mcpkit--find-tool name active-services)))
+      (or (mcpkit-resolve-tool-name name active-services) name)
+    name))
+
 (defun mcpkit--handle-tools-call (id params active-services done-callback &optional start-time)
   "Handle MCP tools/call request for ID and PARAMS on ACTIVE-SERVICES.
 Invoke DONE-CALLBACK with status, response-plist, tool-name, dur, msg."
   (let* ((start (or start-time (float-time)))
-         (tool-name (plist-get params :name))
+         (requested-name (plist-get params :name))
+         (tool-name (mcpkit--canonical-call-name requested-name active-services))
          (arguments (plist-get params :arguments))
          (wrapped-done
           (lambda (status resp tname dur msg &rest rest)
@@ -768,7 +970,8 @@ ON-COLLISION specifies how tool name collisions are handled:
                (user-error "Tool name collision for '%s' when starting service '%s'"
                            tname (mcpkit-service-name svc))))
            (mcpkit-service-tools svc))))
-      (push (cons svc on-collision) mcpkit--active-services))
+      (push (cons svc on-collision) mcpkit--active-services)
+      (mcpkit--invalidate-snapshots))
     (unless mcpkit--active-server
       (let* ((listen-port (or port (mcpkit-service-port svc) (and (boundp 'mcpkit-default-port) mcpkit-default-port) 8765))
              (log-buf (or mcpkit-log-buffer-name "*mcpkit-logs*"))
@@ -798,6 +1001,7 @@ If no active services remain, close the underlying `ws-server' socket."
       (setq mcpkit--active-services
             (seq-remove (lambda (entry) (eq (car entry) svc)) mcpkit--active-services))
       (setf (mcpkit-service-server svc) nil)
+      (mcpkit--invalidate-snapshots)
       (when (and (null mcpkit--active-services) mcpkit--active-server)
         (ignore-errors (ws-stop mcpkit--active-server))
         (setq mcpkit--active-server nil
