@@ -292,7 +292,12 @@ and safe evaluation to AI agents:
 Exposed MCP tools:
 - ~emacs_server_status~: Return Emacs process status, versions, uptime, and active mcpkit services.
 - ~emacs_get_buffer~: Inspect buffer metadata and contents by name or visited file path.
-- ~emacs_eval~: Safely evaluate an Emacs Lisp expression string with prompt suppression.
+- ~eval~ (exposed as ~emacs__eval~; formerly ~emacs_eval~): Last resort. Evaluates arbitrary Emacs Lisp; prefer a specific tool found with ~search_tools~.
+- ~mcpkit_stats~: Per-tool call statistics as structured rows (optional ~tool~ and ~limit~ arguments).
+
+The ~mcp_buffer_list~, ~mcp_buffer_kill~, ~mcp_buffer_save~, ~mcp_buffer_revert~ and
+~mcp_get_messages~ duplicate tools were removed; those names (and ~emacs_eval~) still
+work through ~mcpkit-tool-aliases~ and resolve to the ~emacs_*~ tools.
 
 * API Reference
 :PROPERTIES:
@@ -460,6 +465,11 @@ When an MCP service hosts dozens of tools, listing the entire tool catalog in ev
 - *Orderless-Powered Filtering*: Searches match across tool names, owning services, descriptions, and parameter schema names using ~orderless-filter~ (or a built-in token fallback when ~orderless~ is unavailable). Multi-word out-of-order queries (e.g. ~"buffer append"~) match seamlessly.
 - *Proxy and Sprite Collation*: Multi-process tools available across sub-daemon sprites are collated into a single canonical tool entry with process availability annotations (~[Available in processes: local, sprite:worker-1]~) rather than polluting the catalog with redundant duplicates.
 - *Direct Execution*: Any registered tool remains directly callable via ~tools/call~ without requiring prior discovery.
+- *Name Resolution*: ~invoke_tool~ and ~tools/call~ accept the exact namespaced name (~emacs__emacs_get_buffer~), the unprefixed name (~emacs_get_buffer~) when it maps to exactly one tool, or an alias from ~mcpkit-tool-aliases~ (old name to current name). Ambiguous bare names are rejected with the list of candidates. Aliases are resolver-only: they are never registered, so they do not appear in search or ~tools/list~. Packages add aliases with ~(mcpkit-register-tool-alias OLD NEW)~; ~(mcpkit-resolve-tool-name NAME &optional ACTIVE-SERVICES)~ returns the canonical name or nil.
+- *Pinning*: ~mcpkit-search-pinned-tools~ entries may be namespaced, unprefixed, or aliased names; ~mcpkit-search-pinned-services~ (default nil) pins every tool of the listed services.
+- *Usage Pinning*: With ~mcpkit-search-pinned-by-usage~ (default t) the most used tools are pinned too: up to ~mcpkit-search-pinned-usage-limit~ (8) tools with at least ~mcpkit-search-pinned-usage-min-calls~ (5) raw calls, ranked by decayed score (ties by name), skipping ~mcpkit-search-pinned-usage-exclude~ (the gateway tools, ~eval~ / ~emacs__eval~) and ~mcpkit-stats-hidden-tools~. With no recorded usage nothing extra is pinned. The effective pinned set is static pins, plus pinned services, plus usage pins. The usage set is a *snapshot* taken at the first ~tools/list~ after the services start and is not recomputed per request, because a changing tool list invalidates client prompt caches. It is dropped when a service starts or stops; ~M-x mcpkit-search-refresh-usage-pins~ recomputes it (and the catalog) on demand, otherwise it refreshes on daemon or service restart.
+- *Namespace Discovery*: The always-pinned ~search_tools~ description carries a compact catalog from the active services (computed from the same snapshot): one line per service, ~- <service> (<N> tools): <description>; popular: <top 3 tools by score>~. ~popular~ is omitted without usage data; the catalog is capped at about 1500 characters (popular lists are dropped first, then descriptions truncated). ~search_tools~ with ~service~ and an empty ~query~ lists every tool in that service (when ~limit~ is not given). Disable with ~mcpkit-search-catalog-in-description~ (default t).
+- *Compact Output*: ~search_tools~ renders parameters in the text as ~name (type, required)~ and omits the structured ~:tools~ copy unless ~mcpkit-search-structured-tools~ is non-nil. With no match it appends ~mcpkit-search-no-match-hint~ (by default pointing at ~emacs__eval~ as a last resort).
 
 * Usage Statistics and Telemetry
 :PROPERTIES:
@@ -468,6 +478,16 @@ When an MCP service hosts dozens of tools, listing the entire tool catalog in ev
 
 =mcpkit-stats= automatically tracks execution metrics for all tool invocations:
 - *Metrics Tracked*: Call count, successes, errors, error percentage, latency percentiles (min, max, average, last), timestamp of last run, and a circular ring buffer of the last 10 errors with arguments.
+- *Unknown Tools*: Calls to names that are not active tools (typos) are not recorded; the synthetic gateway tools are.
+- *Argument Digests*: ~mcpkit-stats-argument-digesters~ maps a tool name to a function that turns the request arguments into a short key; counts per key are kept per tool and the top 10 appear in the detail view. The default digester for the eval tool records the first function called in the expression (e.g. ~sprite-create~), which shows which patterns deserve a dedicated tool.
+- *Persistence*: Set ~mcpkit-stats-file~ (default nil, no persistence) to keep aggregates across restarts. Only aggregates are saved per tool (name, service, call/success/error counts, total/min/max duration, last call time, top 20 argument digests, decayed score); the recent-errors ring and request arguments are never written. The file holds one readable form ~(mcpkit-stats :version 1 :saved "TS" :tools (PLIST ...))~, written atomically with mode 0600. It is loaded (merged: counts added, earlier min, later max, digests unioned) when =mcpkit-stats= loads, saved after ~mcpkit-stats-save-interval~ (300) idle seconds when dirty, on ~kill-emacs-hook~, and by ~M-x mcpkit-stats-save~ / ~mcpkit-stats-load~ (the latter skips a file already merged unless given a prefix argument). Unknown versions or unreadable files are ignored with a logged warning. Sprite worker daemons never save or load, and only the live statistics table is ever persisted. With several daemons sharing one file the last writer wins. Example for ~bootstrap.el~, set before mcpkit loads:
+  #+begin_src emacs-lisp
+  (add-to-list 'sprite-state-mappings '(mcpkit-stats-file . "mcpkit-stats.eld"))
+  #+end_src
+  Any approach that sets ~mcpkit-stats-file~ before the library loads works; a value already set is respected.
+- *Usage Score*: Each call adds 1 to a score that decays by ~0.5 ^ (elapsed / half-life)~ (~mcpkit-stats-half-life-days~, default 14); ~(mcpkit-stats-score TOOL &optional NOW)~ returns the current value. It drives usage pinning and the catalog's popular lists.
+- *Reset*: ~mcpkit-stats-reset~ (all, or one tool; returns the cleared names) also rewrites the persisted file immediately; the dashboard ~c~ key uses it. There is deliberately no MCP reset tool: resetting is a rare, human-initiated operation.
+- *Programmatic Access*: The ~mcpkit_stats~ MCP tool (and ~mcpkit-stats-rows~) return the table as structured rows (each with ~score~ and ~pinned~: ~static~, ~service~, ~usage~ or null), honoring ~mcpkit-stats-hidden-tools~. ~mcpkit_stats~ also returns ~persisted~ (file path or null), ~last_saved~ and ~usage_pins~.
 - *Interactive Dashboard*: ~M-x mcpkit-stats~ opens ~*mcpkit-stats*~ in ~tabulated-list-mode~.
   - ~RET~ or ~v~: Inspect detailed tool metrics, schema, and error traces.
   - ~i~: Jump directly to the Elisp tool definition in source code.
