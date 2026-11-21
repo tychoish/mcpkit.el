@@ -62,8 +62,9 @@
   (source-file nil :type (or null string) :documentation "Path to defining source file.")
   (source-line nil :type (or null integer) :documentation "Line number where tool was defined.")
   (log-name nil :type (or null function)
-            :documentation "Optional (lambda (args active-services)) returning the name to log for a call, or nil.
-Wrapper tools use it to be logged as the tool they invoke."))
+            :documentation "Optional (lambda (args active-services)).
+Returns the name to log for a call, or nil.  Wrapper tools use it to be
+logged as the tool they invoke."))
 
 (cl-defstruct (mcpkit-service
                (:constructor make-mcpkit-service--raw)
