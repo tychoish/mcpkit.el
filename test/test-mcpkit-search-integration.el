@@ -15,6 +15,7 @@
         (mcpkit--active-services nil)
         (mcpkit--active-server nil)
         (mcpkit-log-verbose nil)
+        (mcpkit-log-buffer-name " *mcpkit-search-http-log*")
         (server-port 18888)
         (mcpkit-search-mode 'auto)
         (mcpkit-search-threshold 2)
@@ -111,17 +112,41 @@
                     (should (equal text "read:foo.txt"))))
               (kill-buffer buf)))
 
+          ;; Gateway calls should be logged as their target, exactly once.
+          (let* ((url-request-method "POST")
+                 (url-request-extra-headers '(("Content-Type" . "application/json")))
+                 (url-request-data
+                  (encode-coding-string
+                   "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"invoke_tool\",\"arguments\":{\"name\":\"buffer_read\",\"arguments\":{\"file\":\"bar.txt\"}}}}"
+                   'utf-8))
+                 (buf (url-retrieve-synchronously
+                       (format "http://127.0.0.1:%d/mcp" server-port) t t 5)))
+            (should buf)
+            (unwind-protect
+                (with-current-buffer buf
+                  (goto-char (point-min))
+                  (should (re-search-forward "\r?\n\r?\n" nil t))
+                  (let* ((parsed (mcpkit--parse-request
+                                  (buffer-substring-no-properties (point) (point-max))))
+                         (content (plist-get (plist-get parsed :result) :content)))
+                    (should (equal "read:bar.txt" (plist-get (aref content 0) :text)))))
+              (kill-buffer buf)))
+          (with-current-buffer mcpkit-log-buffer-name
+            (should (= 2 (how-many "OK buffer_read " (point-min) (point-max))))
+            (should-not (string-match-p "OK invoke_tool " (buffer-string))))
+
           ;; 4. Verify telemetry in mcpkit-stats reflects HTTP calls
           (let ((rec-search (mcpkit-stats-get "search_tools"))
                 (rec-buf-read (mcpkit-stats-get "buffer_read")))
             (should (>= (mcpkit-stats-record-call-count rec-search) 1))
             (should (= (mcpkit-stats-record-success-count rec-search) 1))
             (should (>= (mcpkit-stats-record-call-count rec-buf-read) 1))
-            (should (= (mcpkit-stats-record-success-count rec-buf-read) 1))
+            (should (= (mcpkit-stats-record-success-count rec-buf-read) 2))
             (should (> (mcpkit-stats-record-total-duration-ms rec-buf-read) 0.0))))
 
       ;; Cleanup
-      (mcpkit-stop-service 'search-e2e-svc))))
+      (mcpkit-stop-service 'search-e2e-svc)
+      (when-let* ((buf (get-buffer mcpkit-log-buffer-name))) (kill-buffer buf)))))
 
 (provide 'test-mcpkit-search-integration)
 

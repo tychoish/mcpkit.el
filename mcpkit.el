@@ -764,7 +764,18 @@ Invoke DONE-CALLBACK with status, resp, tool-name, dur, msg, req, resp-pl."
                 (lambda (status resp tool-name dur msg &optional req resp-pl)
                   (mcpkit--invoke-done-callback
                    done-callback
-                   status resp tool-name dur msg
+                   status resp
+                   (if (equal tool-name "invoke_tool")
+                       (let* ((gateway-args (plist-get params :arguments))
+                              (gateway-args (and (listp gateway-args) gateway-args))
+                              (target (plist-get gateway-args :name)))
+                         (if (and (stringp target) (not (string-empty-p target)))
+                             (if (plist-get gateway-args :target_id)
+                                 target
+                               (mcpkit--canonical-call-name target active-services))
+                           tool-name))
+                     tool-name)
+                   dur msg
                    (or req body-string)
                    (or resp-pl resp)))))
           (cond

@@ -182,6 +182,116 @@
       (should (equal (plist-get (aref (plist-get (plist-get (cdr captured) :result) :content) 0) :text)
                      "echo: yo")))))
 
+(ert-deftest mcpkit-search-test-invoke-log-identifies-target ()
+  "Gateway requests report the invoked tool to the transport logger."
+  (let* ((mcpkit--active-services (test-mcpkit-search--invoke-fixture))
+         (payload (mcpkit--serialize-response
+                   '(:jsonrpc "2.0" :id 1 :method "tools/call"
+                     :params (:name "invoke_tool"
+                              :arguments (:name "echo_tool" :arguments (:text "hi"))))))
+         (seen nil))
+    (mcpkit--handle-request-payload
+     payload mcpkit--active-services
+     (lambda (status response name &rest _)
+       (setq seen (list status response name))))
+    (should (eq (car seen) 'success))
+    (should (equal "echo_tool" (nth 2 seen)))
+    (should (equal "echo: hi"
+                   (plist-get (aref (plist-get (plist-get (nth 1 seen) :result) :content) 0)
+                              :text)))))
+
+(ert-deftest mcpkit-search-test-invoke-log-identifies-failed-target ()
+  "Errors from an invoked tool remain associated with its target name."
+  (let* ((mcpkit--active-services (test-mcpkit-search--invoke-fixture))
+         (payload (mcpkit--serialize-response
+                   '(:jsonrpc "2.0" :id 1 :method "tools/call"
+                     :params (:name "invoke_tool"
+                              :arguments (:name "unknown_tool" :arguments nil)))))
+         (seen nil))
+    (mcpkit--handle-request-payload
+     payload mcpkit--active-services
+     (lambda (status _response name &rest _)
+       (setq seen (list status name))))
+    (should (eq (car seen) 'error))
+    (should (equal "unknown_tool" (cadr seen)))))
+
+(ert-deftest mcpkit-search-test-invoke-log-delayed-completion ()
+  "A delayed tool completion retains its resolved target for logging."
+  (let* ((mcpkit--active-services (test-mcpkit-search--invoke-fixture))
+         (svc (car mcpkit--active-services))
+         (tool (map-elt (mcpkit-service-tools svc) "echo_tool"))
+         (callback nil)
+         (seen nil))
+    (setf (mcpkit-tool-handler tool) (lambda (_args done) (setq callback done)))
+    (mcpkit--handle-request-payload
+     (mcpkit--serialize-response
+      '(:jsonrpc "2.0" :id 1 :method "tools/call"
+        :params (:name "invoke_tool" :arguments (:name "echo_tool" :arguments (:text "hi")))))
+     mcpkit--active-services
+     (lambda (status _response name &rest _) (setq seen (list status name))))
+    (should (functionp callback))
+    (should-not seen)
+    (funcall callback nil "done")
+    (should (equal '(success "echo_tool") seen))))
+
+(ert-deftest mcpkit-search-test-invoke-log-proxy-target ()
+  "Proxy invocations log the remote tool name instead of the gateway."
+  (let* ((mcpkit--active-services (test-mcpkit-search--invoke-fixture))
+         (proxy (make-mcpkit-tool :name "remote_tool" :service 'proxy))
+         (seen nil))
+    (cl-letf (((symbol-function 'mcpkit-proxy-list-routes) #'ignore)
+              ((symbol-function 'mcpkit-search--find-proxy-tool)
+               (lambda (_name _target) proxy))
+              ((symbol-function 'mcpkit-search--call-proxy-tool)
+               (lambda (_tool _args) '((:type "text" :text "done")))))
+      (mcpkit--handle-request-payload
+       (mcpkit--serialize-response
+        '(:jsonrpc "2.0" :id 1 :method "tools/call"
+          :params (:name "invoke_tool"
+                   :arguments (:name "remote_tool" :target_id "worker"))))
+       mcpkit--active-services
+       (lambda (status _response name &rest _) (setq seen (list status name))))
+      (should (equal '(success "remote_tool") seen)))))
+
+(ert-deftest mcpkit-search-test-invoke-log-records-resolved-service ()
+  "Log one entry under the resolved tool and its service, not the gateway."
+  (let* ((mcpkit--active-services (test-mcpkit-search--ns-fixture '(emacs "echo_tool")))
+         (mcpkit-tool-aliases '(("echo_alias" . "echo_tool")))
+         (mcpkit-log-buffer-name " *mcpkit-invoke-test-log*")
+         (mcpkit-log-split-services nil)
+         (seen nil))
+    (unwind-protect
+        (progn
+          (mcpkit--handle-request-payload
+           (mcpkit--serialize-response
+            '(:jsonrpc "2.0" :id 1 :method "tools/call"
+              :params (:name "invoke_tool"
+                       :arguments (:name "echo_alias" :arguments (:text "hi")))))
+           mcpkit--active-services
+           (lambda (status response name duration message &optional req resp)
+             (push name seen)
+             (mcpkit--log status name duration message req (or resp response))))
+          (should (equal '("emacs__echo_tool") seen))
+          (with-current-buffer mcpkit-log-buffer-name
+            (should (string-match-p "OK emacs__echo_tool " (buffer-string)))
+            (should-not (string-match-p "invoke_tool" (buffer-string)))
+            (should (= 1 (count-lines (point-min) (point-max))))))
+      (when-let* ((buf (get-buffer mcpkit-log-buffer-name))) (kill-buffer buf)))))
+
+(ert-deftest mcpkit-search-test-invoke-log-malformed-arguments ()
+  "Malformed gateway arguments retain their error response."
+  (let ((mcpkit--active-services (test-mcpkit-search--invoke-fixture))
+        (seen nil))
+    (mcpkit--handle-request-payload
+     (mcpkit--serialize-response
+      '(:jsonrpc "2.0" :id 1 :method "tools/call"
+        :params (:name "invoke_tool" :arguments "bad")))
+     mcpkit--active-services
+     (lambda (status response name &rest _)
+       (setq seen (list status response name))))
+    (should (eq 'error (car seen)))
+    (should (plist-get (nth 1 seen) :error))))
+
 (ert-deftest mcpkit-search-test-invoke-tool-unknown ()
   "invoke_tool errors on an unknown tool name."
   (let ((mcpkit--active-services (test-mcpkit-search--invoke-fixture)))
