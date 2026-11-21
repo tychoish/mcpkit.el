@@ -7,6 +7,19 @@
 (defvar agent-shell-mcp-servers nil)
 (defvar sprite-instance-id nil)
 (defvar server-name nil)
+(defconst mcpkit-agent-shell-test--source
+  (expand-file-name "../mcpkit-agent-shell.el" (file-name-directory (or load-file-name buffer-file-name))))
+
+(ert-deftest mcpkit-agent-shell-test-load-does-not-require-services ()
+  "Loading the bridge does not require the service manager."
+  (let ((original-require (symbol-function 'require))
+        (after-load-alist nil))
+    (cl-letf (((symbol-function 'require)
+               (lambda (feature &rest args)
+                 (when (eq feature 'mcpkit-services)
+                   (ert-fail "Bridge eagerly required mcpkit-services"))
+                 (apply original-require feature args))))
+      (load mcpkit-agent-shell-test--source nil t))))
 
 (ert-deftest mcpkit-agent-shell-test-real-deferred-load ()
   (when (featurep 'agent-shell)

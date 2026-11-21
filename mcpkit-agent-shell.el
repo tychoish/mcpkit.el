@@ -10,7 +10,9 @@
 (require 'map)
 (require 'seq)
 (require 'subr-x)
-(require 'mcpkit-services)
+
+(autoload 'mcpkit-active-port "mcpkit")
+(autoload 'mcpkit-init-services-sync "mcpkit-services" nil t)
 
 (declare-function agent-shell--mcp-servers "agent-shell")
 (declare-function agent-shell--make-acp-client "agent-shell")
