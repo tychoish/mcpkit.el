@@ -676,6 +676,22 @@
           (should-not logged))
       (delete-process mock-proc))))
 
+(ert-deftest mcpkit-test-handle-payload-internal-error-not-parse-error ()
+  "A non-parse failure after decoding is reported as -32603 with method and id."
+  (let ((result nil))
+    (cl-letf (((symbol-function 'mcpkit--handle-initialize)
+               (lambda (&rest _) (error "Boom"))))
+      (mcpkit--handle-request-payload
+       "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"initialize\"}"
+       nil
+       (lambda (status resp tool dur msg &rest _)
+         (setq result (list status resp tool dur msg)))))
+    (should (eq (nth 0 result) 'error))
+    (should (equal (plist-get (nth 1 result) :id) 7))
+    (should (= (plist-get (plist-get (nth 1 result) :error) :code) -32603))
+    (should (equal (nth 2 result) "initialize"))
+    (should (string-match-p "Internal error handling initialize.*Boom" (nth 4 result)))))
+
 (provide 'mcpkit-test)
 ;;; mcpkit-test.el ends here
 

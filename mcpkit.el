@@ -786,9 +786,10 @@ Invoke DONE-CALLBACK with status, response-plist, tool-name, dur, msg."
 (defun mcpkit--handle-request-payload (body-string active-services done-callback)
   "Parse BODY-STRING and dispatch JSON-RPC request for ACTIVE-SERVICES.
 Invoke DONE-CALLBACK with status, resp, tool-name, dur, msg, req, resp-pl."
-  (let ((start-time (float-time)))
-    (condition-case parse-err
-        (let* ((request (mcpkit--parse-request body-string))
+  (let ((start-time (float-time))
+        (request nil))
+    (condition-case err
+        (let* ((_ (setq request (mcpkit--parse-request body-string)))
                (id (plist-get request :id))
                (method (plist-get request :method))
                (params (plist-get request :params))
@@ -823,9 +824,17 @@ Invoke DONE-CALLBACK with status, resp, tool-name, dur, msg, req, resp-pl."
               (funcall inner-done 'error resp (or method "-") dur msg)))))
       (error
        (let* ((dur (* (- (float-time) start-time) 1000.0))
-              (msg (format "Parse error: %s" (error-message-string parse-err)))
-              (resp (mcpkit--make-error-response nil mcpkit-error-parse-error msg)))
-         (mcpkit--invoke-done-callback done-callback 'error resp nil dur msg body-string resp))))))
+              (parse-failure-p (or (memq (car err) '(json-error json-parse-error json-end-of-file json-trailing-content))
+                                   (null request)))
+              (method (and (listp request) (plist-get request :method)))
+              (msg (if parse-failure-p
+                       (format "Parse error: %s" (error-message-string err))
+                     (format "Internal error handling %s: %S" (or method "-") err)))
+              (resp (mcpkit--make-error-response
+                     (and (listp request) (plist-get request :id))
+                     (if parse-failure-p mcpkit-error-parse-error mcpkit-error-internal-error)
+                     msg)))
+         (mcpkit--invoke-done-callback done-callback 'error resp method dur msg body-string resp))))))
 
 ;;; Transport & Server Lifecycle
 
