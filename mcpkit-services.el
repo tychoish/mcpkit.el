@@ -50,6 +50,15 @@ name with `mcpkit-instance-port'."
                  (integer :tag "Port number"))
   :group 'mcpkit)
 
+(defcustom mcpkit-register-proxy-route t
+  "Non-nil means started services register a `mcpkit-proxy' route.
+The route maps `mcpkit-instance-name-function''s name to the services port,
+so other tools can address this instance by name."
+  :type 'boolean
+  :group 'mcpkit)
+
+(declare-function mcpkit-proxy-register-route "mcpkit-proxy")
+
 (defun mcpkit-port-available-p (port)
   "Return non-nil if local TCP PORT is available to bind."
   (condition-case nil
@@ -126,11 +135,28 @@ runner handle, which cancels pending loads when called."
 ;;;###autoload
 (defun mcpkit-start-services-on-instance-port ()
   "Start all services on the running port, `mcpkit-services-port',
-or a derived one."
-  (mcpkit-start-all-services
-   (or (mcpkit-active-port)
-       (and (integerp mcpkit-services-port) mcpkit-services-port)
-       (mcpkit-instance-port))))
+or a derived one, then register the instance with `mcpkit-proxy' when
+`mcpkit-register-proxy-route' is non-nil."
+  (prog1 (mcpkit-start-all-services
+          (or (mcpkit-active-port)
+              (and (integerp mcpkit-services-port) mcpkit-services-port)
+              (mcpkit-instance-port)))
+    (mcpkit-proxy-register-self)))
+
+(defun mcpkit-proxy-register-self ()
+  "Register this instance's services port as a `mcpkit-proxy' route.
+The route is named by `mcpkit-instance-name-function', falling back to
+`server-name'.  Do nothing unless `mcpkit-register-proxy-route' is non-nil,
+a server is active and `mcpkit-proxy' is available.  Return the route name
+or nil."
+  (when-let* (mcpkit-register-proxy-route
+              (port (mcpkit-active-port))
+              ((require 'mcpkit-proxy nil t))
+              (name (or (funcall mcpkit-instance-name-function)
+                        (bound-and-true-p server-name)
+                        "solo")))
+    (mcpkit-proxy-register-route name port)
+    name))
 
 ;;;###autoload
 (defun mcpkit-init-services-sync ()

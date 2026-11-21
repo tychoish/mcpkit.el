@@ -96,3 +96,41 @@
       (should (string-match-p "Skipping mcpkit-no-such-module" (plist-get ev :msg))))))
 
 ;;; test-mcpkit-services.el ends here
+
+;; Proxy route registration
+
+(ert-deftest mcpkit-services-test-register-self-uses-instance-name ()
+  "Registration maps the instance name to the active port."
+  (require 'mcpkit-proxy)
+  (let ((mcpkit-register-proxy-route t)
+        (mcpkit-instance-name-function (lambda () "test-inst")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'mcpkit-active-port) (lambda () 4321)))
+          (should (equal (mcpkit-proxy-register-self) "test-inst"))
+          (should (equal (mcpkit-proxy--route-port "test-inst") 4321)))
+      (mcpkit-proxy-unregister-route "test-inst"))))
+
+(ert-deftest mcpkit-services-test-register-self-respects-opt-out-and-no-server ()
+  "No route is registered when disabled or when no server is active."
+  (require 'mcpkit-proxy)
+  (let ((mcpkit-instance-name-function (lambda () "test-inst2")))
+    (unwind-protect
+        (progn
+          (let ((mcpkit-register-proxy-route nil))
+            (cl-letf (((symbol-function 'mcpkit-active-port) (lambda () 1)))
+              (should-not (mcpkit-proxy-register-self))))
+          (let ((mcpkit-register-proxy-route t))
+            (cl-letf (((symbol-function 'mcpkit-active-port) (lambda () nil)))
+              (should-not (mcpkit-proxy-register-self))))
+          (should-not (mcpkit-proxy--route-port "test-inst2")))
+      (mcpkit-proxy-unregister-route "test-inst2"))))
+
+(ert-deftest mcpkit-services-test-start-registers-route ()
+  "Starting services on the instance port registers the proxy route."
+  (let ((registered nil))
+    (cl-letf (((symbol-function 'mcpkit-active-port) (lambda () 99))
+              ((symbol-function 'mcpkit-start-all-services) (lambda (&rest _) nil))
+              ((symbol-function 'mcpkit-proxy-register-self)
+               (lambda () (setq registered t))))
+      (mcpkit-start-services-on-instance-port)
+      (should registered))))
