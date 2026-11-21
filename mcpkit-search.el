@@ -706,10 +706,22 @@ required parameters; otherwise return (or pass to DONE) the tool's content."
      (t
       (cdr outcome)))))
 
+(defun mcpkit-search--invoke-log-name (args active-services)
+  "Return the target tool name to log for `invoke_tool' ARGS, or nil.
+Proxy calls (with `:target_id') log the remote name as given; local calls
+log the canonical name on ACTIVE-SERVICES."
+  (let* ((args (and (listp args) args))
+         (target (plist-get args :name)))
+    (when (and (stringp target) (not (string-empty-p target)))
+      (if (plist-get args :target_id)
+          target
+        (mcpkit--canonical-call-name target active-services)))))
+
 (defun mcpkit-search-make-invoke-tool ()
   "Construct the synthetic `invoke_tool' `mcpkit-tool' definition."
   (make-mcpkit-tool
    :name "invoke_tool"
+   :log-name #'mcpkit-search--invoke-log-name
    :description "Invoke a tool discovered with search_tools, by name, passing its arguments as an object."
    :input-schema
    '(:type "object"

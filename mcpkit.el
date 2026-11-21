@@ -60,7 +60,10 @@
   (encode #'mcpkit--default-encode :type function :documentation "Function to encode handler return value into content array.")
   (service nil :type (or null symbol) :documentation "Symbol naming the owning service.")
   (source-file nil :type (or null string) :documentation "Path to defining source file.")
-  (source-line nil :type (or null integer) :documentation "Line number where tool was defined."))
+  (source-line nil :type (or null integer) :documentation "Line number where tool was defined.")
+  (log-name nil :type (or null function)
+            :documentation "Optional (lambda (args active-services)) returning the name to log for a call, or nil.
+Wrapper tools use it to be logged as the tool they invoke."))
 
 (cl-defstruct (mcpkit-service
                (:constructor make-mcpkit-service--raw)
@@ -661,6 +664,14 @@ cannot be resolved."
       (or (mcpkit-resolve-tool-name name active-services) name)
     name))
 
+(defun mcpkit--tool-log-name (tool-name arguments active-services)
+  "Return the log name for a call to TOOL-NAME with ARGUMENTS, or nil.
+Delegates to the tool's `log-name' function when it defines one."
+  (when-let* (((stringp tool-name))
+              (tool (mcpkit--find-tool tool-name active-services))
+              (fn (mcpkit-tool-log-name tool)))
+    (funcall fn arguments active-services)))
+
 (defun mcpkit--handle-tools-call (id params active-services done-callback &optional start-time)
   "Handle MCP tools/call request for ID and PARAMS on ACTIVE-SERVICES.
 Invoke DONE-CALLBACK with status, response-plist, tool-name, dur, msg."
@@ -673,7 +684,10 @@ Invoke DONE-CALLBACK with status, response-plist, tool-name, dur, msg."
             (when tname
               (run-hook-with-args 'mcpkit-post-tool-call-functions
                                   tname status dur msg arguments))
-            (apply done-callback status resp tname dur msg rest)))
+            (apply done-callback status resp
+                   (or (mcpkit--tool-log-name tool-name arguments active-services)
+                       tname)
+                   dur msg rest)))
          (tool (when (stringp tool-name) (mcpkit--find-tool tool-name active-services))))
     (cond
      ((or (null tool-name) (not (stringp tool-name)))
@@ -765,16 +779,7 @@ Invoke DONE-CALLBACK with status, resp, tool-name, dur, msg, req, resp-pl."
                   (mcpkit--invoke-done-callback
                    done-callback
                    status resp
-                   (if (equal tool-name "invoke_tool")
-                       (let* ((gateway-args (plist-get params :arguments))
-                              (gateway-args (and (listp gateway-args) gateway-args))
-                              (target (plist-get gateway-args :name)))
-                         (if (and (stringp target) (not (string-empty-p target)))
-                             (if (plist-get gateway-args :target_id)
-                                 target
-                               (mcpkit--canonical-call-name target active-services))
-                           tool-name))
-                     tool-name)
+                   tool-name
                    dur msg
                    (or req body-string)
                    (or resp-pl resp)))))
