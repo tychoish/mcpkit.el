@@ -654,6 +654,28 @@
                     (should (string-match-p "\\[resp: .*\\]" log-text))))))
           (delete-process mock-proc))))))
 
+(ert-deftest mcpkit-test-handle-request-get-returns-405 ()
+  "A bodyless GET (SSE probe) gets 405 and is not logged as a parse error."
+  (let* ((codes nil)
+         (headers nil)
+         (logged nil)
+         (mock-proc (make-process :name "mock-proc-get" :buffer nil :command '("cat"))))
+    (unwind-protect
+        (cl-letf (((symbol-function 'ws-response-header)
+                   (lambda (_proc code &rest hdrs)
+                     (setq codes (cons code codes))
+                     (setq headers hdrs)))
+                  ((symbol-function 'process-send-string) #'ignore)
+                  ((symbol-function 'mcpkit--log)
+                   (lambda (&rest _) (setq logged t))))
+          (mcpkit--handle-request
+           (make-instance 'ws-request :process mock-proc :body ""
+                          :headers (list (cons :GET "/mcp"))))
+          (should (equal codes '(405)))
+          (should (member '("Allow" . "POST") headers))
+          (should-not logged))
+      (delete-process mock-proc))))
+
 (provide 'mcpkit-test)
 ;;; mcpkit-test.el ends here
 

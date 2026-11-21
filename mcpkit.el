@@ -1033,35 +1033,44 @@ Emits structured `logx' events categorized by subsystem."
 (defun mcpkit--handle-request (request)
   "HTTP request handler called by `web-server' for REQUEST."
   (let ((proc (oref request process))
-        (body (oref request body)))
-    (mcpkit--handle-request-payload
-     body
-     mcpkit--active-services
-     (lambda (status response-payload tool-name duration-ms err-msg &optional req-payload resp-payload)
-       (condition-case send-err
-           (if (eq status 'notification)
-               (progn
-                 (when (and (processp proc) (process-live-p proc))
-                   (ws-response-header proc 202
+        (body (oref request body))
+        (headers (oref request headers)))
+    (if (seq-some (lambda (m) (assq m headers)) '(:GET :HEAD :DELETE :PUT :OPTIONS))
+        ;; Streamable HTTP clients probe with GET for an SSE stream and retry;
+        ;; decline with 405 instead of reporting a bogus JSON parse error.
+        (when (and (processp proc) (process-live-p proc))
+          (ws-response-header proc 405
+                              '("Allow" . "POST")
+                              '("Connection" . "close")
+                              (cons "Content-Length" "0")))
+      (mcpkit--handle-request-payload
+       body
+       mcpkit--active-services
+       (lambda (status response-payload tool-name duration-ms err-msg &optional req-payload resp-payload)
+	 (condition-case send-err
+             (if (eq status 'notification)
+		 (progn
+                   (when (and (processp proc) (process-live-p proc))
+                     (ws-response-header proc 202
+					 '("Connection" . "close")
+					 (cons "Content-Length" "0")))
+                   (mcpkit--log status tool-name duration-ms err-msg (or req-payload body) ""))
+               (let* ((json-str (if (stringp response-payload)
+                                    response-payload
+                                  (mcpkit--serialize-response response-payload)))
+                      (bytes (string-bytes json-str)))
+		 (when (and (processp proc) (process-live-p proc))
+                   (ws-response-header proc 200
+                                       '("Content-Type" . "application/json; charset=utf-8")
                                        '("Connection" . "close")
-                                       (cons "Content-Length" "0")))
-                 (mcpkit--log status tool-name duration-ms err-msg (or req-payload body) ""))
-             (let* ((json-str (if (stringp response-payload)
-                                  response-payload
-                                (mcpkit--serialize-response response-payload)))
-                    (bytes (string-bytes json-str)))
-               (when (and (processp proc) (process-live-p proc))
-                 (ws-response-header proc 200
-                                     '("Content-Type" . "application/json; charset=utf-8")
-                                     '("Connection" . "close")
-                                     (cons "Content-Length" (number-to-string bytes)))
-                 (process-send-string proc json-str))
-               (mcpkit--log status tool-name duration-ms err-msg (or req-payload body) (or resp-payload json-str))))
-         (error
-          (ignore-errors
-            (mcpkit--log 'error tool-name duration-ms
-                         (format "Client send error: %s" (error-message-string send-err))
-                         (or req-payload body) nil))))))))
+                                       (cons "Content-Length" (number-to-string bytes)))
+                   (process-send-string proc json-str))
+		 (mcpkit--log status tool-name duration-ms err-msg (or req-payload body) (or resp-payload json-str))))
+           (error
+            (ignore-errors
+              (mcpkit--log 'error tool-name duration-ms
+                           (format "Client send error: %s" (error-message-string send-err))
+                           (or req-payload body) nil)))))))))
 
 ;;;###autoload
 (cl-defun mcpkit-start-service (name-or-service &key (on-collision 'namespace) port)
