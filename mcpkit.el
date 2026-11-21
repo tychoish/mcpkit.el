@@ -524,14 +524,18 @@ defaults to `mcpkit--active-services'."
                                (equal (cadr (split-string tn "__")) tname)))))
                   (mcpkit--normalize-tools active-services))
         ;; Also inspect active-services tool tables directly
-        (seq-some (lambda (item)
-                    (let* ((svc (if (consp item) (mcpkit-get-service (car item)) (mcpkit-get-service item)))
-                           (tools (and svc (mcpkit-service-tools svc))))
-                      (and tools
-                           (or (map-elt tools tname)
-                               (and (string-match-p "__" tname)
-                                    (map-elt tools (cadr (split-string tname "__"))))))))
-                  active-services)
+        (let ((svc-items (cond
+                          ((null active-services) nil)
+                          ((listp active-services) active-services)
+                          (t (list active-services)))))
+          (seq-some (lambda (item)
+                      (let* ((svc (if (consp item) (mcpkit-get-service (car item)) (mcpkit-get-service item)))
+                             (tools (and svc (mcpkit-service-tools svc))))
+                        (and tools
+                             (or (map-elt tools tname)
+                                 (and (string-match-p "__" tname)
+                                      (map-elt tools (cadr (split-string tname "__"))))))))
+                    svc-items))
         (when (and (member tname '("search_tools" "invoke_tool" "discover_services"))
                    (require 'mcpkit-search nil t))
           (cond
@@ -1004,28 +1008,26 @@ Emits structured `logx' events categorized by subsystem."
          (insert log-line)))
      (delete-dups buf-names))
     (condition-case nil
-        (if is-ok
-            (logx-info :cat cat
-                       :src src
-                       :msg log-msg
-                       :tool (and is-tool tname)
-                       :status (if is-notification "note" "ok")
-                       :duration_ms dur-val
-                       :input_bytes in-bytes
-                       :output_bytes out-bytes
-                       :req req-payload
-                       :resp resp-payload)
-          (logx-error :cat cat
-                      :src src
-                      :msg log-msg
-                      :tool (and is-tool tname)
-                      :status "error"
-                      :duration_ms dur-val
-                      :error err
-                      :input_bytes in-bytes
-                      :output_bytes out-bytes
-                      :req req-payload
-                      :resp resp-payload))
+        (let* ((lvl (if is-ok 'info 'error))
+               (data (if is-ok
+                         (list :tool (and is-tool tname)
+                               :status (if is-notification "note" "ok")
+                               :duration_ms dur-val
+                               :input_bytes in-bytes
+                               :output_bytes out-bytes
+                               :req req-payload
+                               :resp resp-payload)
+                       (list :tool (and is-tool tname)
+                             :status "error"
+                             :duration_ms dur-val
+                             :error err
+                             :input_bytes in-bytes
+                             :output_bytes out-bytes
+                             :req req-payload
+                             :resp resp-payload))))
+          (when (fboundp 'logx--emit-event)
+            (when (logx--level-enabled-p lvl cat)
+              (logx--emit-event lvl cat log-msg src data))))
       (error nil))))
 
 (defun mcpkit--handle-request (request)
