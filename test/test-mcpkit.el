@@ -693,5 +693,49 @@ not recorded in the live session's statistics."
         (when (buffer-live-p test-buf)
           (kill-buffer test-buf))))))
 
+(ert-deftest mcpkit-test-log-origin-and-rpc-labels ()
+  "Verify mcpkit--log resolves tool source coordinates and formats RPC/Request labels."
+  (mcpkit-test--with-clean-env
+    (let ((logx-events nil)
+          (svc (make-mcpkit-service--raw :name 'test-svc))
+          (test-buf (get-buffer-create "*test-mcpkit-origin*")))
+      (unwind-protect
+          (let ((mcpkit-log-buffer-name (buffer-name test-buf)))
+            ;; Register tool with known source file and line
+            (let ((tool (make-mcpkit-tool
+                         :name "test-svc__my_tool"
+                         :service 'test-svc
+                         :source-file "/path/to/my-tool.el"
+                         :source-line 123)))
+              (setf (map-elt (mcpkit-service-tools svc) "my_tool") tool)
+              (setq mcpkit--active-services (list (cons svc 'namespace))))
+
+            (cl-letf (((symbol-function 'logx--ring-push)
+                       (lambda (ev) (push ev logx-events) ev)))
+              ;; 1. Tool call should link to its registered call site
+              (mcpkit--log 'success "test-svc__my_tool" 5.0 nil "{}" "{}")
+              (should logx-events)
+              (let* ((ev (car logx-events))
+                     (src (plist-get ev :src)))
+                (should (eq (plist-get ev :cat) 'mcpkit-tool))
+                (should (string-match-p "Tool test-svc__my_tool completed" (plist-get ev :msg)))
+                (should (equal (plist-get src :file) "my-tool.el"))
+                (should (equal (plist-get src :line) 123)))
+
+              ;; 2. Anonymous/nil tool call logs as Request under mcpkit-rpc (never "Tool - completed")
+              (mcpkit--log 'success nil 0.5 nil "{}" "{}")
+              (let ((ev (car logx-events)))
+                (should (eq (plist-get ev :cat) 'mcpkit-rpc))
+                (should (string-match-p "Request completed" (plist-get ev :msg)))
+                (should-not (string-match-p "Tool -" (plist-get ev :msg))))
+
+              ;; 3. RPC initialize logs as RPC initialize under mcpkit-rpc
+              (mcpkit--log 'success "initialize" 1.2 nil "{}" "{}")
+              (let ((ev (car logx-events)))
+                (should (eq (plist-get ev :cat) 'mcpkit-rpc))
+                (should (string-match-p "RPC initialize completed" (plist-get ev :msg))))))
+        (when (buffer-live-p test-buf)
+          (kill-buffer test-buf))))))
+
 (provide 'test-mcpkit)
 ;;; test-mcpkit.el ends here

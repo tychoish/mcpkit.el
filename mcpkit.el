@@ -791,18 +791,18 @@ Invoke DONE-CALLBACK with status, resp, tool-name, dur, msg, req, resp-pl."
            ((equal method "initialize")
             (let* ((dur (* (- (float-time) start-time) 1000.0))
                    (resp (mcpkit--handle-initialize id params)))
-              (funcall inner-done 'success resp nil dur nil)))
+              (funcall inner-done 'success resp "initialize" dur nil)))
            ((equal method "tools/list")
             (let* ((dur (* (- (float-time) start-time) 1000.0))
                    (resp (mcpkit--handle-tools-list id active-services)))
-              (funcall inner-done 'success resp nil dur nil)))
+              (funcall inner-done 'success resp "tools/list" dur nil)))
            ((equal method "tools/call")
             (mcpkit--handle-tools-call id params active-services inner-done start-time))
            (t
             (let* ((dur (* (- (float-time) start-time) 1000.0))
                    (msg (format "Method not found: %s" method))
                    (resp (mcpkit--make-error-response id mcpkit-error-method-not-found msg)))
-              (funcall inner-done 'error resp nil dur msg)))))
+              (funcall inner-done 'error resp (or method "-") dur msg)))))
       (error
        (let* ((dur (* (- (float-time) start-time) 1000.0))
               (msg (format "Parse error: %s" (error-message-string parse-err)))
@@ -880,9 +880,13 @@ when `mcpkit-log-verbose' is non-nil.
 Emits structured `logx' events categorized by subsystem."
   (let* ((dur-val (or duration-ms 0.0))
          (is-ok (member status '(success ok "success" "OK")))
-         (tname (if (and tool-name (not (string-empty-p (format "%s" tool-name))))
-                    (format "%s" tool-name)
-                  "-"))
+         (tool (and tool-name (mcpkit--find-tool (format "%s" tool-name) mcpkit--active-services)))
+         (has-name (and tool-name (not (string-empty-p (format "%s" tool-name))) (not (equal (format "%s" tool-name) "-"))))
+         (is-rpc (or (not has-name)
+                     (member tool-name '("initialize" "tools/list"))
+                     (string-prefix-p "notifications/" (format "%s" (or tool-name "")))))
+         (is-tool (and has-name (not is-rpc)))
+         (tname (if has-name (format "%s" tool-name) "-"))
          (err (and err-msg (not (string-empty-p (format "%s" err-msg))) (format "%s" err-msg)))
          (in-bytes (mcpkit--payload-bytes req-payload))
          (out-bytes (mcpkit--payload-bytes resp-payload))
@@ -898,7 +902,30 @@ Emits structured `logx' events categorized by subsystem."
          (log-line (format "[%s] %s %s %.2fms (in: %dB, out: %dB)%s%s%s\n"
                            timestamp status-str tname dur-val in-bytes out-bytes err-str req-str resp-str))
          (main-buf (or mcpkit-log-buffer-name "*mcpkit-logs*"))
-         (buf-names (list main-buf)))
+         (buf-names (list main-buf))
+         ;; Resolve source coordinates for the tool definition
+         (sfile (and tool (mcpkit-tool-source-file tool)))
+         (sline (and tool (mcpkit-tool-source-line tool)))
+         (src (cond
+               ((and sfile sline)
+                (list :file (file-name-nondirectory sfile)
+                      :path sfile
+                      :line sline
+                      :fn (intern (format "%s" tname))))
+               ((and tool (mcpkit-tool-handler tool))
+                (let ((handler (mcpkit-tool-handler tool)))
+                  (when (symbolp handler)
+                    (when-let* ((hfile (find-lisp-object-file-name handler 'defun)))
+                      (list :file (file-name-nondirectory hfile)
+                            :path hfile
+                            :line 1
+                            :fn handler)))))
+               (t nil)))
+         (cat (if is-tool 'mcpkit-tool 'mcpkit-rpc))
+         (op-label (cond
+                    (is-tool (format "Tool %s" tname))
+                    ((not (equal tname "-")) (format "RPC %s" tname))
+                    (t "Request"))))
     (when (and mcpkit-log-split-services tool-name)
       (when-let* ((svc (mcpkit--service-for-tool tool-name)))
         (when-let* ((svc-buf (mcpkit-service-log-buffer-name svc)))
@@ -911,18 +938,20 @@ Emits structured `logx' events categorized by subsystem."
      (delete-dups buf-names))
     (condition-case nil
         (if is-ok
-            (logx-info :cat 'mcpkit-tool
-                       :msg (format "Tool %s completed in %.2fms (in: %dB, out: %dB)" tname dur-val in-bytes out-bytes)
-                       :tool tname
+            (logx-info :cat cat
+                       :src src
+                       :msg (format "%s completed in %.2fms (in: %dB, out: %dB)" op-label dur-val in-bytes out-bytes)
+                       :tool (and is-tool tname)
                        :status "ok"
                        :duration_ms dur-val
                        :input_bytes in-bytes
                        :output_bytes out-bytes
                        :req req-payload
                        :resp resp-payload)
-          (logx-error :cat 'mcpkit-tool
-                      :msg (format "Tool %s failed in %.2fms (in: %dB, out: %dB): %s" tname dur-val in-bytes out-bytes (or err "unknown error"))
-                      :tool tname
+          (logx-error :cat cat
+                      :src src
+                      :msg (format "%s failed in %.2fms (in: %dB, out: %dB): %s" op-label dur-val in-bytes out-bytes (or err "unknown error"))
+                      :tool (and is-tool tname)
                       :status "error"
                       :duration_ms dur-val
                       :error err
