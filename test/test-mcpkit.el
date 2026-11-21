@@ -729,11 +729,33 @@ not recorded in the live session's statistics."
                 (should (string-match-p "Request completed" (plist-get ev :msg)))
                 (should-not (string-match-p "Tool -" (plist-get ev :msg))))
 
-              ;; 3. RPC initialize logs as RPC initialize under mcpkit-rpc
+              ;; 3. RPC initialize logs as RPC initialize under mcpkit-rpc with resolved handler line
               (mcpkit--log 'success "initialize" 1.2 nil "{}" "{}")
-              (let ((ev (car logx-events)))
+              (let* ((ev (car logx-events))
+                     (src (plist-get ev :src)))
                 (should (eq (plist-get ev :cat) 'mcpkit-rpc))
-                (should (string-match-p "RPC initialize completed" (plist-get ev :msg))))))
+                (should (string-match-p "RPC initialize completed" (plist-get ev :msg)))
+                (should (equal (plist-get src :file) "mcpkit.el"))
+                (should (> (plist-get src :line) 1))
+                (should (eq (plist-get src :fn) 'mcpkit--handle-initialize)))
+
+              ;; 4. Notification logs as INFO (never error) with Notification label
+              (mcpkit--log 'notification "notifications/roots/list_changed" 0.05 nil "{}" nil)
+              (let* ((ev (car logx-events))
+                     (src (plist-get ev :src)))
+                (should (eq (plist-get ev :lvl) 'info))
+                (should (eq (plist-get ev :cat) 'mcpkit-rpc))
+                (should (string-match-p "Notification notifications/roots/list_changed received" (plist-get ev :msg)))
+                (should (equal (plist-get src :file) "mcpkit.el"))
+                (should (> (plist-get src :line) 1)))
+
+              ;; 5. Bare/unqualified tool name resolves to namespaced tool definition
+              (mcpkit--log 'success "my_tool" 3.0 nil "{}" "{}")
+              (let* ((ev (car logx-events))
+                     (src (plist-get ev :src)))
+                (should (eq (plist-get ev :cat) 'mcpkit-tool))
+                (should (equal (plist-get src :file) "my-tool.el"))
+                (should (= (plist-get src :line) 123)))))
         (when (buffer-live-p test-buf)
           (kill-buffer test-buf))))))
 

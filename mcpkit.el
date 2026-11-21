@@ -516,17 +516,31 @@ defaults to `mcpkit--active-services'."
 
 (defun mcpkit--find-tool (name active-services)
   "Find `mcpkit-tool' with NAME string in ACTIVE-SERVICES."
-  (or (seq-find (lambda (tool) (equal (mcpkit-tool-name tool) name))
-                (mcpkit--normalize-tools active-services))
-      (when (and (member name '("search_tools" "invoke_tool" "discover_services"))
-                 (require 'mcpkit-search nil t))
-        (cond
-         ((equal name "search_tools")
-          (mcpkit-search-make-search-tool active-services))
-         ((equal name "invoke_tool")
-          (mcpkit-search-make-invoke-tool))
-         ((equal name "discover_services")
-          (mcpkit-search-make-discover-services-tool))))))
+  (let ((tname (format "%s" (or name ""))))
+    (or (seq-find (lambda (tool)
+                    (let ((tn (mcpkit-tool-name tool)))
+                      (or (equal tn tname)
+                          (and (string-match-p "__" tn)
+                               (equal (cadr (split-string tn "__")) tname)))))
+                  (mcpkit--normalize-tools active-services))
+        ;; Also inspect active-services tool tables directly
+        (seq-some (lambda (item)
+                    (let* ((svc (if (consp item) (mcpkit-get-service (car item)) (mcpkit-get-service item)))
+                           (tools (and svc (mcpkit-service-tools svc))))
+                      (and tools
+                           (or (map-elt tools tname)
+                               (and (string-match-p "__" tname)
+                                    (map-elt tools (cadr (split-string tname "__"))))))))
+                  active-services)
+        (when (and (member tname '("search_tools" "invoke_tool" "discover_services"))
+                   (require 'mcpkit-search nil t))
+          (cond
+           ((equal tname "search_tools")
+            (mcpkit-search-make-search-tool active-services))
+           ((equal tname "invoke_tool")
+            (mcpkit-search-make-invoke-tool))
+           ((equal tname "discover_services")
+            (mcpkit-search-make-discover-services-tool)))))))
 
 ;;; MCP Protocol Handlers
 
@@ -873,13 +887,74 @@ Matches both un-namespaced and namespaced tool names."
           (string-bytes (mcpkit--format-payload payload))
         (error 0)))))
 
+(defun mcpkit--resolve-source-coordinates (tool is-rpc op-name)
+  "Resolve source file, line, and function symbol for TOOL or RPC OP-NAME."
+  (cond
+   ;; 1. Registered tool with explicit source file and line
+   ((and tool (mcpkit-tool-source-file tool) (mcpkit-tool-source-line tool))
+    (let ((sfile (mcpkit-tool-source-file tool)))
+      (list :file (file-name-nondirectory sfile)
+            :path sfile
+            :line (mcpkit-tool-source-line tool)
+            :fn (intern (format "%s" (or op-name (mcpkit-tool-name tool)))))))
+   ;; 2. Registered tool with handler function symbol
+   ((and tool (mcpkit-tool-handler tool) (symbolp (mcpkit-tool-handler tool)))
+    (let* ((fn (mcpkit-tool-handler tool))
+           (loc (ignore-errors (find-function-noselect fn t))))
+      (if (and loc (car loc) (cdr loc))
+          (let ((buf (car loc)) (pos (cdr loc)))
+            (with-current-buffer buf
+              (list :file (and (buffer-file-name buf) (file-name-nondirectory (buffer-file-name buf)))
+                    :path (buffer-file-name buf)
+                    :line (line-number-at-pos pos)
+                    :fn fn)))
+        (when-let* ((hfile (find-lisp-object-file-name fn 'defun)))
+          (list :file (file-name-nondirectory hfile)
+                :path hfile
+                :line nil
+                :fn fn)))))
+   ;; 3. RPC methods
+   (is-rpc
+    (let* ((target-fn (cond
+                       ((equal op-name "initialize") #'mcpkit--handle-initialize)
+                       ((equal op-name "tools/list") #'mcpkit--handle-tools-list)
+                       ((equal op-name "tools/call") #'mcpkit--handle-tools-call)
+                       ((and op-name (string-prefix-p "notifications/" op-name))
+                        #'mcpkit--handle-request-payload)
+                       (t #'mcpkit--log)))
+           (loc (ignore-errors (find-function-noselect target-fn t))))
+      (if (and loc (car loc) (cdr loc))
+          (let ((buf (car loc)) (pos (cdr loc)))
+            (with-current-buffer buf
+              (list :file (and (buffer-file-name buf) (file-name-nondirectory (buffer-file-name buf)))
+                    :path (buffer-file-name buf)
+                    :line (line-number-at-pos pos)
+                    :fn target-fn)))
+        (let ((sfile (find-lisp-object-file-name target-fn 'defun)))
+          (list :file (and sfile (file-name-nondirectory sfile))
+                :path sfile
+                :line nil
+                :fn target-fn)))))
+   ;; 4. Fallback to mcpkit--log definition
+   (t
+    (let ((loc (ignore-errors (find-function-noselect #'mcpkit--log t))))
+      (if (and loc (car loc) (cdr loc))
+          (let ((buf (car loc)) (pos (cdr loc)))
+            (with-current-buffer buf
+              (list :file (and (buffer-file-name buf) (file-name-nondirectory (buffer-file-name buf)))
+                    :path (buffer-file-name buf)
+                    :line (line-number-at-pos pos)
+                    :fn 'mcpkit--log)))
+        nil)))))
+
 (defun mcpkit--log (status tool-name duration-ms err-msg &optional req-payload resp-payload)
   "Log request outcome STATUS, TOOL-NAME, DURATION-MS, and ERR-MSG.
 REQ-PAYLOAD and RESP-PAYLOAD are optional request and response payloads logged
 when `mcpkit-log-verbose' is non-nil.
 Emits structured `logx' events categorized by subsystem."
   (let* ((dur-val (or duration-ms 0.0))
-         (is-ok (member status '(success ok "success" "OK")))
+         (is-notification (eq status 'notification))
+         (is-ok (or is-notification (member status '(success ok "success" "OK" notification 'notification))))
          (tool (and tool-name (mcpkit--find-tool (format "%s" tool-name) mcpkit--active-services)))
          (has-name (and tool-name (not (string-empty-p (format "%s" tool-name))) (not (equal (format "%s" tool-name) "-"))))
          (is-rpc (or (not has-name)
@@ -891,7 +966,7 @@ Emits structured `logx' events categorized by subsystem."
          (in-bytes (mcpkit--payload-bytes req-payload))
          (out-bytes (mcpkit--payload-bytes resp-payload))
          (timestamp (format-time-string "%Y-%m-%d %H:%M:%S.%3N"))
-         (status-str (if is-ok "OK" "ERROR"))
+         (status-str (cond (is-notification "NOTE") (is-ok "OK") (t "ERROR")))
          (err-str (if err (format " [error: %s]" err) ""))
          (req-str (if (and mcpkit-log-verbose req-payload)
                       (format " [req: %s]" (mcpkit--format-payload req-payload))
@@ -903,29 +978,21 @@ Emits structured `logx' events categorized by subsystem."
                            timestamp status-str tname dur-val in-bytes out-bytes err-str req-str resp-str))
          (main-buf (or mcpkit-log-buffer-name "*mcpkit-logs*"))
          (buf-names (list main-buf))
-         ;; Resolve source coordinates for the tool definition
-         (sfile (and tool (mcpkit-tool-source-file tool)))
-         (sline (and tool (mcpkit-tool-source-line tool)))
-         (src (cond
-               ((and sfile sline)
-                (list :file (file-name-nondirectory sfile)
-                      :path sfile
-                      :line sline
-                      :fn (intern (format "%s" tname))))
-               ((and tool (mcpkit-tool-handler tool))
-                (let ((handler (mcpkit-tool-handler tool)))
-                  (when (symbolp handler)
-                    (when-let* ((hfile (find-lisp-object-file-name handler 'defun)))
-                      (list :file (file-name-nondirectory hfile)
-                            :path hfile
-                            :line 1
-                            :fn handler)))))
-               (t nil)))
+         (src (mcpkit--resolve-source-coordinates tool is-rpc (and has-name tname)))
          (cat (if is-tool 'mcpkit-tool 'mcpkit-rpc))
          (op-label (cond
+                    (is-notification (format "Notification %s" tname))
                     (is-tool (format "Tool %s" tname))
                     ((not (equal tname "-")) (format "RPC %s" tname))
-                    (t "Request"))))
+                    (t "Request")))
+         (log-msg (cond
+                   (is-notification
+                    (format "%s received in %.2fms (in: %dB)" op-label dur-val in-bytes))
+                   (is-ok
+                    (format "%s completed in %.2fms (in: %dB, out: %dB)" op-label dur-val in-bytes out-bytes))
+                   (t
+                    (format "%s failed in %.2fms (in: %dB, out: %dB): %s"
+                            op-label dur-val in-bytes out-bytes (or err "unknown error"))))))
     (when (and mcpkit-log-split-services tool-name)
       (when-let* ((svc (mcpkit--service-for-tool tool-name)))
         (when-let* ((svc-buf (mcpkit-service-log-buffer-name svc)))
@@ -940,9 +1007,9 @@ Emits structured `logx' events categorized by subsystem."
         (if is-ok
             (logx-info :cat cat
                        :src src
-                       :msg (format "%s completed in %.2fms (in: %dB, out: %dB)" op-label dur-val in-bytes out-bytes)
+                       :msg log-msg
                        :tool (and is-tool tname)
-                       :status "ok"
+                       :status (if is-notification "note" "ok")
                        :duration_ms dur-val
                        :input_bytes in-bytes
                        :output_bytes out-bytes
@@ -950,7 +1017,7 @@ Emits structured `logx' events categorized by subsystem."
                        :resp resp-payload)
           (logx-error :cat cat
                       :src src
-                      :msg (format "%s failed in %.2fms (in: %dB, out: %dB): %s" op-label dur-val in-bytes out-bytes (or err "unknown error"))
+                      :msg log-msg
                       :tool (and is-tool tname)
                       :status "error"
                       :duration_ms dur-val
