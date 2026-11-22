@@ -86,7 +86,8 @@ startup window before services are up, initializes them synchronously."
 (defun mcpkit-agent-shell--resolve-servers (original &rest args)
   "Resolve our entry before ORIGINAL, omitting it when unavailable.
 ARGS are passed to ORIGINAL.  Agent-specific lists are left untouched."
-  (if (map-nested-elt agent-shell--state '(:agent-config :mcp-servers))
+  (if (and (bound-and-true-p agent-shell--state)
+           (map-nested-elt agent-shell--state '(:agent-config :mcp-servers)))
       (apply original args)
     (let* ((agent-shell-mcp-servers
             (if (seq-some #'mcpkit-agent-shell--resolver-p agent-shell-mcp-servers)
