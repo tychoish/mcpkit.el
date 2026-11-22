@@ -19,7 +19,7 @@
 (declare-function mcpkit-proxy-list-routes "mcpkit-proxy")
 (declare-function ws-process "web-server")
 
-(defvar agent-shell-mcp-servers nil)
+(defvar agent-shell-mcp-servers)
 (defvar agent-shell--state)
 (defvar sprite-instance-id)
 (defvar server-name)
@@ -126,15 +126,16 @@ ARGS are passed to ORIGINAL.  Agent-specific lists are left untouched."
 (defun mcpkit-agent-shell--install ()
   "Install the bridge while its mode is enabled."
   (when mcpkit-agent-shell-mode
-    (when (seq-some (lambda (entry)
-                      (and (listp entry) (not (functionp entry))
-                           (equal (map-elt entry 'name) "emacs")))
-                    agent-shell-mcp-servers)
-      (mcpkit-agent-shell-mode -1)
-      (user-error "MCPKit agent-shell: an MCP server named emacs already exists"))
-    (setq agent-shell-mcp-servers
-          (cons mcpkit-agent-shell--resolver
-                (seq-remove #'mcpkit-agent-shell--resolver-p agent-shell-mcp-servers)))
+    (when (boundp 'agent-shell-mcp-servers)
+      (when (seq-some (lambda (entry)
+                        (and (listp entry) (not (functionp entry))
+                             (equal (map-elt entry 'name) "emacs")))
+                      agent-shell-mcp-servers)
+        (mcpkit-agent-shell-mode -1)
+        (user-error "MCPKit agent-shell: an MCP server named emacs already exists"))
+      (setq agent-shell-mcp-servers
+            (cons mcpkit-agent-shell--resolver
+                  (seq-remove #'mcpkit-agent-shell--resolver-p agent-shell-mcp-servers))))
     (advice-add 'agent-shell--mcp-servers :around #'mcpkit-agent-shell--resolve-servers)
     (advice-add 'agent-shell--make-acp-client :around #'mcpkit-agent-shell--inject-environment)))
 

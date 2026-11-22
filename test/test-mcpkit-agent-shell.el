@@ -21,44 +21,46 @@
                  (apply original-require feature args))))
       (load mcpkit-agent-shell-test--source nil t))))
 
-(ert-deftest mcpkit-agent-shell-test-real-deferred-load ()
-  (when (featurep 'agent-shell)
-    (ert-skip "agent-shell is already loaded"))
-  (let ((after-load-alist nil)
-        (agent-shell-mcp-servers nil)
-        (mcpkit-agent-shell-mode nil)
-        (file (make-temp-file "agent-shell-test" nil ".el" "(provide 'agent-shell)")))
+(ert-deftest mcpkit-agent-shell-test-does-not-initialize-external-variable ()
+  "Enabling the bridge does not define agent-shell's server list."
+  (let ((agent-shell-mcp-servers nil)
+        (mcpkit-agent-shell-mode nil))
     (unwind-protect
         (progn
-          (dotimes (_ 3)
-            (mcpkit-agent-shell-mode 1)
-            (mcpkit-agent-shell-mode -1))
-          (should (= 1 (length (cdr (assq 'agent-shell after-load-alist)))))
-          (load file nil t)
-          (should-not agent-shell-mcp-servers))
-      (mcpkit-agent-shell-mode -1)
-      (when (featurep 'agent-shell)
-        (unload-feature 'agent-shell t))
-      (delete-file file))))
-
-(ert-deftest mcpkit-agent-shell-test-real-deferred-enable ()
-  (when (featurep 'agent-shell)
-    (ert-skip "agent-shell is already loaded"))
-  (let ((after-load-alist nil)
-        (agent-shell-mcp-servers nil)
-        (mcpkit-agent-shell-mode nil)
-        (file (make-temp-file "agent-shell-test" nil ".el" "(provide 'agent-shell)")))
-    (unwind-protect
-        (progn
+          (makunbound 'agent-shell-mcp-servers)
           (mcpkit-agent-shell-mode 1)
-          (load file nil t)
-          (should (= 1 (length agent-shell-mcp-servers)))
+          (should-not (boundp 'agent-shell-mcp-servers))
+          (should (advice-member-p #'mcpkit-agent-shell--resolve-servers
+                                   'agent-shell--mcp-servers))
           (mcpkit-agent-shell-mode -1)
-          (should-not agent-shell-mcp-servers))
-      (mcpkit-agent-shell-mode -1)
-      (when (featurep 'agent-shell)
-        (unload-feature 'agent-shell t))
-      (delete-file file))))
+          (should-not (boundp 'agent-shell-mcp-servers)))
+      (mcpkit-agent-shell-mode -1))))
+
+(ert-deftest mcpkit-agent-shell-test-preload-injects-after-definition ()
+  "Bridge later definitions without owning agent-shell's variable."
+  (let ((agent-shell-mcp-servers nil)
+        (agent-shell--state nil)
+        (mcpkit-agent-shell-mode nil))
+    (cl-letf (((symbol-function 'agent-shell--mcp-servers) nil)
+              ((symbol-function 'mcpkit-agent-shell--port) (lambda () 8765)))
+      (unwind-protect
+          (progn
+            (makunbound 'agent-shell-mcp-servers)
+            (mcpkit-agent-shell-mode 1)
+            (should-not (boundp 'agent-shell-mcp-servers))
+            (setq agent-shell-mcp-servers '(((name . "other"))))
+            (defalias 'agent-shell--mcp-servers
+              (lambda () (vconcat agent-shell-mcp-servers)))
+            (let ((servers (agent-shell--mcp-servers)))
+              (should (= (length servers) 2))
+              (should (equal (map-elt (aref servers 0) 'name) "emacs"))
+              (should (equal (map-elt (aref servers 1) 'name) "other")))
+            (setq agent-shell-mcp-servers '(((name . "emacs"))))
+            (should-error (agent-shell--mcp-servers) :type 'user-error)
+            (mcpkit-agent-shell-mode -1)
+            (should-not (advice-member-p #'mcpkit-agent-shell--resolve-servers
+                                         'agent-shell--mcp-servers)))
+        (mcpkit-agent-shell-mode -1)))))
 
 (when (featurep 'agent-shell)
 (defmacro mcpkit-agent-shell-test--with-mode (&rest body)
