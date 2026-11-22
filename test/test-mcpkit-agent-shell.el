@@ -107,6 +107,16 @@
           (mcpkit-agent-shell-mode -1)
           (should (equal agent-shell-mcp-servers (list other))))))))
 
+(ert-deftest mcpkit-agent-shell-test-server-list-replaced-after-enable ()
+  "Preserve the bridge when later customization replaces the server list."
+  (cl-letf (((symbol-function 'mcpkit-agent-shell--port) (lambda () 8765)))
+    (mcpkit-agent-shell-test--with-mode
+      (setq agent-shell-mcp-servers '(((name . "other") (command . "true"))))
+      (let ((servers (agent-shell--mcp-servers)))
+        (should (= (length servers) 2))
+        (should (equal (map-elt (aref servers 0) 'name) "emacs"))
+        (should (equal (map-elt (aref servers 1) 'name) "other"))))))
+
 (ert-deftest mcpkit-agent-shell-test-dynamic-collision-and-override ()
   (cl-letf (((symbol-function 'mcpkit-agent-shell--port) (lambda () 8765)))
     (mcpkit-agent-shell-test--with-mode
@@ -131,26 +141,21 @@
     (should-not mcpkit-agent-shell-mode)))
 
 (ert-deftest mcpkit-agent-shell-test-deferred-toggle ()
+  "Install and remove the bridge even before agent-shell loads."
   (let ((agent-shell-mcp-servers nil)
-        (mcpkit-agent-shell-mode nil)
-        (callback nil))
+        (mcpkit-agent-shell-mode nil))
     (unwind-protect
-        (cl-letf (((symbol-function 'featurep) (lambda (&rest _) nil))
-                  ((symbol-function 'eval-after-load)
-                   (lambda (_feature form) (setq callback form))))
+        (cl-letf (((symbol-function 'featurep) (lambda (&rest _) nil)))
           (mcpkit-agent-shell-mode 1)
-          (should callback)
-          (should-not agent-shell-mcp-servers)
-          (mcpkit-agent-shell-mode -1)
-          (mcpkit-agent-shell--install)
-          (should-not agent-shell-mcp-servers)
+          (should (= 1 (length agent-shell-mcp-servers)))
+          (should (advice-member-p #'mcpkit-agent-shell--resolve-servers
+                                   'agent-shell--mcp-servers))
           (mcpkit-agent-shell-mode 1)
-          (mcpkit-agent-shell--install)
-          (mcpkit-agent-shell-mode 1)
-          (mcpkit-agent-shell--install)
           (should (= 1 (length agent-shell-mcp-servers)))
           (mcpkit-agent-shell-mode -1)
-          (should-not agent-shell-mcp-servers))
+          (should-not agent-shell-mcp-servers)
+          (should-not (advice-member-p #'mcpkit-agent-shell--resolve-servers
+                                       'agent-shell--mcp-servers)))
       (mcpkit-agent-shell-mode -1))))
 
 (ert-deftest mcpkit-agent-shell-test-proxy-and-identity ()

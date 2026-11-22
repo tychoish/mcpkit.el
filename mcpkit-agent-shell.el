@@ -19,7 +19,7 @@
 (declare-function mcpkit-proxy-list-routes "mcpkit-proxy")
 (declare-function ws-process "web-server")
 
-(defvar agent-shell-mcp-servers)
+(defvar agent-shell-mcp-servers nil)
 (defvar agent-shell--state)
 (defvar sprite-instance-id)
 (defvar server-name)
@@ -86,10 +86,13 @@ startup window before services are up, initializes them synchronously."
 (defun mcpkit-agent-shell--resolve-servers (original &rest args)
   "Resolve our entry before ORIGINAL, omitting it when unavailable.
 ARGS are passed to ORIGINAL.  Agent-specific lists are left untouched."
-  (if (or (map-nested-elt agent-shell--state '(:agent-config :mcp-servers))
-          (not (seq-some #'mcpkit-agent-shell--resolver-p agent-shell-mcp-servers)))
+  (if (map-nested-elt agent-shell--state '(:agent-config :mcp-servers))
       (apply original args)
-    (let* ((spec (funcall mcpkit-agent-shell--resolver))
+    (let* ((agent-shell-mcp-servers
+            (if (seq-some #'mcpkit-agent-shell--resolver-p agent-shell-mcp-servers)
+                agent-shell-mcp-servers
+              (cons mcpkit-agent-shell--resolver agent-shell-mcp-servers)))
+           (spec (funcall mcpkit-agent-shell--resolver))
            (replaced nil)
            (agent-shell-mcp-servers
             (seq-mapcat (lambda (entry)
@@ -121,7 +124,7 @@ ARGS are passed to ORIGINAL.  Agent-specific lists are left untouched."
                                (append env missing)))))
 
 (defun mcpkit-agent-shell--install ()
-  "Install bridge after agent-shell is loaded, if still enabled."
+  "Install the bridge while its mode is enabled."
   (when mcpkit-agent-shell-mode
     (when (seq-some (lambda (entry)
                       (and (listp entry) (not (functionp entry))
@@ -143,10 +146,7 @@ entries win over the MCPKit defaults.  Disabling leaves services running."
   :global t
   :group 'mcpkit-agent-shell
   (if mcpkit-agent-shell-mode
-      (if (featurep 'agent-shell)
-          (mcpkit-agent-shell--install)
-        (with-eval-after-load 'agent-shell
-          (mcpkit-agent-shell--install)))
+      (mcpkit-agent-shell--install)
     (when (boundp 'agent-shell-mcp-servers)
       (setq agent-shell-mcp-servers
             (seq-remove #'mcpkit-agent-shell--resolver-p agent-shell-mcp-servers)))
