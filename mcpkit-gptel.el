@@ -40,8 +40,7 @@
 (require 'map)
 (require 'mcpkit)
 
-;; Optional dependency: load gptel if available, declare symbols if not.
-(require 'gptel nil t)
+;; Optional dependency: gptel symbols are forward-declared; gptel is loaded on demand.
 
 (declare-function gptel-make-tool "gptel")
 (declare-function gptel-tool-name "gptel")
@@ -163,6 +162,8 @@ asynchronous :function calling convention.  Tools are grouped in gptel's UI
 under a :category matching the service name.
 
 Return the list of `gptel-tool' structs created."
+  (unless (fboundp 'gptel-make-tool)
+    (require 'gptel nil t))
   (unless (fboundp 'gptel-make-tool)
     (user-error "Package `gptel' is required for mcpkit-gptel tool registration"))
   (let ((service (mcpkit-get-service service-name)))
