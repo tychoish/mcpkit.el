@@ -179,5 +179,17 @@ Emacs is `noninteractive'.  See `mcpkit-init-services-sync'."
    (t (mcpkit-load-services-async
        :on-done #'mcpkit-start-services-on-instance-port))))
 
+;;;###autoload
+(defun mcpkit-show-endpoint ()
+  "Show the URL of the running MCP server and copy it to the kill ring.
+Signal a `user-error' when no server is running."
+  (interactive)
+  (if-let* ((port (mcpkit-active-port)))
+      (let ((url (format "http://127.0.0.1:%d/" port)))
+        (kill-new url)
+        (message "mcpkit listening at %s (copied)" url)
+        url)
+    (user-error "No mcpkit server is running; try `mcpkit-init-services'")))
+
 (provide 'mcpkit-services)
 ;;; mcpkit-services.el ends here
