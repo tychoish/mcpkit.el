@@ -22,6 +22,7 @@
 ;;   - mcp_buffer_replace_region
 ;;   - mcp_ast_grep
 ;;   - mcp_project_diagnostics
+;;   - mcp_fill_file
 ;;
 ;; This module is optional and carries no autoload cookies: loading the
 ;; base `mcpkit' package never pulls this file in.  Callers must
@@ -220,6 +221,26 @@ struct, a symbol, or a string naming an already-defined service)."
                                 :severity severity
                                 :message message)))
                       diags)))))))))
+  ;; 5. mcp_fill_file
+  (mcpkit-register-tool 'mcp_fill_file service-or-name
+    :description "Fill (re-wrap) paragraphs of an org or markdown FILE with Emacs' fill-paragraph, leaving source/example/code blocks untouched. Saves the file unless DRY_RUN is true."
+    :input-schema '(:type "object"
+                    :properties (:file (:type "string" :description "Path to the file to fill")
+                                 :column (:type "integer" :description "Fill column, defaults to 72")
+                                 :dry_run (:type "boolean" :description "Report whether the file would change without writing"))
+                    :required ["file"])
+    (let* ((file (plist-get args :file))
+           (path (expand-file-name file)))
+      (unless (file-exists-p path)
+        (user-error "File not found: %s" file))
+      (with-temp-buffer
+        (insert-file-contents path)
+        (let ((buffer-file-name path))
+          (set-auto-mode))
+        (let ((changed (mcpkit-editing-fill-buffer (plist-get args :column))))
+          (when (and changed (not (eq (plist-get args :dry_run) t)))
+            (write-region (point-min) (point-max) path))
+          (list :file file :changed (if changed t :false))))))
   service-or-name)
 
 (provide 'mcpkit-editing)
