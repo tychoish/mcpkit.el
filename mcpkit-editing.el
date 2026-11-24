@@ -33,6 +33,8 @@
 (require 'seq)
 (require 'json)
 (require 'flymake)
+(require 'org)
+(require 'org-element)
 (require 'mcpkit)
 
 (defgroup mcpkit-editing nil
@@ -76,6 +78,36 @@ returned unsliced."
                         (min total (+ start-idx line-count))
                       total)))
       (string-join (seq-subseq lines (min start-idx total) end-idx) "\n"))))
+
+(defun mcpkit-editing-fill-buffer (&optional column)
+  "Fill every paragraph in the current buffer to COLUMN (default 72).
+Org and Markdown preformatted blocks (source, example, export, fenced
+code) are left untouched.  Returns non-nil when the buffer changed."
+  (let ((fill-column (or column 72))
+        (before (buffer-hash)))
+    (goto-char (point-min))
+    (while (not (eobp))
+      (cond
+       ((looking-at-p "[ \t]*$")
+        (forward-line 1))
+       ((cond
+         ((derived-mode-p 'org-mode)
+          (memq (org-element-type (org-element-at-point))
+                '(src-block example-block export-block fixed-width)))
+         ((and (derived-mode-p 'markdown-mode)
+               (fboundp 'markdown-code-block-at-point-p))
+          (markdown-code-block-at-point-p)))
+        (forward-line 1))
+       ((and (derived-mode-p 'org-mode)
+             (memq (org-element-type (org-element-at-point))
+                   '(headline property-drawer node-property)))
+        (forward-line 1))
+       (t
+        (fill-paragraph)
+        (forward-paragraph)
+        (unless (bolp)
+          (forward-line 1)))))
+    (not (equal before (buffer-hash)))))
 
 (defun mcpkit-editing-register-tools (service-or-name)
   "Register the editing/inspection MCP tools onto SERVICE-OR-NAME.

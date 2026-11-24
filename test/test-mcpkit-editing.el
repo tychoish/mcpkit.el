@@ -206,5 +206,15 @@ synchronously)."
               (kill-buffer buf)))
         (delete-file tmpfile)))))
 
+(ert-deftest mcpkit-editing-fill-buffer-skips-src-blocks ()
+  (with-temp-buffer
+    (org-mode)
+    (insert "* Head\nfoo bar baz qux quux corge grault garply waldo fred\n\n"
+            "#+begin_src sh\nfoo bar baz qux quux corge grault garply waldo fred\n#+end_src\n")
+    (should (mcpkit-editing-fill-buffer 30))
+    (should (string-match-p "^foo bar baz qux quux corge grault garply waldo fred$"
+                            (buffer-string)))
+    (should (string-match-p "^\\* Head\nfoo bar baz qux quux corge\n" (buffer-string)))))
+
 (provide 'test-mcpkit-editing)
 ;;; test-mcpkit-editing.el ends here
