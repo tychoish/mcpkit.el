@@ -1106,7 +1106,10 @@ ON-COLLISION specifies how tool name collisions are handled:
       (push (cons svc on-collision) mcpkit--active-services)
       (mcpkit--invalidate-snapshots))
     (unless mcpkit--active-server
-      (let* ((listen-port (or port (mcpkit-service-port svc) (and (boundp 'mcpkit-default-port) mcpkit-default-port) 8765))
+      (let* ((requested-port (or port (mcpkit-service-port svc) (and (boundp 'mcpkit-default-port) mcpkit-default-port) 8765))
+             (listen-port (if (or (memq requested-port '(t free)) (eql requested-port 0))
+                              (mcpkit-allocate-free-port)
+                            requested-port))
              (log-buf (or mcpkit-log-buffer-name "*mcpkit-logs*"))
              (srv (ws-start (list (cons (lambda (_req) t) #'mcpkit--handle-request))
                             listen-port

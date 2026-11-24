@@ -326,6 +326,17 @@ not recorded in the live session's statistics."
       (should (eq status 'error))
       (should (= (plist-get (plist-get resp :error) :code) mcpkit-error-method-not-found)))))
 
+(ert-deftest mcpkit-test-start-service-free-port ()
+  "A `t' port resolves to a real free port, not the literal `t'."
+  (mcpkit-test--with-clean-env
+    (let ((svc (mcpkit-define-service 'free-port-svc)))
+      (unwind-protect
+          (progn
+            (mcpkit-start-service svc :port t)
+            (should (integerp (mcpkit-active-port)))
+            (should-not (= (mcpkit-active-port) 8765)))
+        (mcpkit-stop-all-services)))))
+
 ;;; Collision Handling Tests
 
 (ert-deftest mcpkit-test-collision-handling ()
