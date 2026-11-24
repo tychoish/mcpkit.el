@@ -82,7 +82,7 @@ returned unsliced."
 
 (defun mcpkit-editing-fill-buffer (&optional column)
   "Fill every paragraph in the current buffer to COLUMN (default 72).
-Org and Markdown preformatted blocks (source, example, export, fenced
+Org and Markdown headings and preformatted blocks (source, example, export, fenced
 code) are left untouched.  Returns non-nil when the buffer changed."
   (let ((fill-column (or column 72))
         (before (buffer-hash)))
@@ -97,7 +97,8 @@ code) are left untouched.  Returns non-nil when the buffer changed."
                 '(src-block example-block export-block fixed-width)))
          ((and (derived-mode-p 'markdown-mode)
                (fboundp 'markdown-code-block-at-point-p))
-          (markdown-code-block-at-point-p)))
+          (or (markdown-code-block-at-point-p)
+              (markdown-heading-at-point))))
         (forward-line 1))
        ((and (derived-mode-p 'org-mode)
              (memq (org-element-type (org-element-at-point))
