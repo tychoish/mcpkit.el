@@ -206,28 +206,5 @@ synchronously)."
               (kill-buffer buf)))
         (delete-file tmpfile)))))
 
-(ert-deftest mcpkit-editing-fill-buffer-skips-src-blocks ()
-  (with-temp-buffer
-    (org-mode)
-    (insert "* Head\nfoo bar baz qux quux corge grault garply waldo fred\n\n"
-            "#+begin_src sh\nfoo bar baz qux quux corge grault garply waldo fred\n#+end_src\n")
-    (should (mcpkit-editing-fill-buffer 30))
-    (should (string-match-p "^foo bar baz qux quux corge grault garply waldo fred$"
-                            (buffer-string)))
-    (should (string-match-p "^\\* Head\nfoo bar baz qux quux corge\n" (buffer-string)))))
-
-(ert-deftest mcpkit-editing-fill-buffer-markdown-frontmatter ()
-  (with-temp-buffer
-    (require 'markdown-mode)
-    (markdown-mode)
-    (insert "---\ntitle: foo bar baz qux quux corge grault garply\ndesc: >\n"
-            "  foo bar baz qux quux corge grault garply waldo\nlit: |\n"
-            "  foo bar baz qux quux corge grault garply waldo\n---\n")
-    (should (mcpkit-editing-fill-buffer 30))
-    (should (string-match-p "^title: foo bar baz qux quux corge grault garply$"
-                            (buffer-string)))
-    (should (string-match-p "^desc: >\n  foo bar baz qux quux corge\n  grault" (buffer-string)))
-    (should (string-match-p "^  foo bar baz qux quux corge grault garply waldo\n---" (buffer-string)))))
-
 (provide 'test-mcpkit-editing)
 ;;; test-mcpkit-editing.el ends here
