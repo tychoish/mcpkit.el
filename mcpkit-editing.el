@@ -102,7 +102,8 @@ code) are left untouched.  Returns non-nil when the buffer changed."
         (forward-line 1))
        ((and (derived-mode-p 'org-mode)
              (memq (org-element-type (org-element-at-point))
-                   '(headline property-drawer node-property)))
+                   '(headline keyword property-drawer node-property drawer
+                     planning clock babel-call)))
         (forward-line 1))
        (t
         (fill-paragraph)
