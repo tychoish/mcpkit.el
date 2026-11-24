@@ -556,6 +556,26 @@ defaults to `mcpkit--active-services'."
          :capabilities (list :tools (list :listChanged :json-false))
          :serverInfo (list :name "mcpkit" :version "0.1.0"))))
 
+;; Clients (Claude Code) probe `server/discover' before `initialize'; without
+;; a handler every connection logs a "Method not found" error.
+(defconst mcpkit--server-instructions
+  "Use search_tools to find tools, invoke_tool to call them, and discover_services to list services."
+  "Guidance returned to clients by `server/discover'.")
+
+(defun mcpkit--handle-server-discover (id &optional _params)
+  "Handle MCP server/discover request for ID and return response plist.
+Advertise only the legacy `initialize' protocol version: mcpkit has no
+per-request `_meta' handling, so clients fall back to `initialize'."
+  (let ((info (list :name "mcpkit" :version "0.1.0")))
+    (mcpkit--make-success-response
+     id
+     (list :resultType "complete"
+           :supportedVersions (vector "2024-11-05")
+           :capabilities (list :tools (list :listChanged :json-false))
+           :serverInfo info
+           :_meta (list :io.modelcontextprotocol/serverInfo info)
+           :instructions mcpkit--server-instructions))))
+
 (defun mcpkit--wire-input-schema (schema)
   "Return SCHEMA suitable for JSON encoding.
 A nil `:properties' would encode as null; encode it as an empty object."
@@ -811,6 +831,10 @@ Invoke DONE-CALLBACK with status, resp, tool-name, dur, msg, req, resp-pl."
             (let* ((dur (* (- (float-time) start-time) 1000.0))
                    (resp (mcpkit--handle-initialize id params)))
               (funcall inner-done 'success resp "initialize" dur nil)))
+           ((equal method "server/discover")
+            (let* ((dur (* (- (float-time) start-time) 1000.0))
+                   (resp (mcpkit--handle-server-discover id params)))
+              (funcall inner-done 'success resp "server/discover" dur nil)))
            ((equal method "tools/list")
             (let* ((dur (* (- (float-time) start-time) 1000.0))
                    (resp (mcpkit--handle-tools-list id active-services)))
@@ -930,6 +954,7 @@ Matches both un-namespaced and namespaced tool names."
    (is-rpc
     (let* ((target-fn (cond
                        ((equal op-name "initialize") #'mcpkit--handle-initialize)
+                       ((equal op-name "server/discover") #'mcpkit--handle-server-discover)
                        ((equal op-name "tools/list") #'mcpkit--handle-tools-list)
                        ((equal op-name "tools/call") #'mcpkit--handle-tools-call)
                        ((and op-name (string-prefix-p "notifications/" op-name))
@@ -971,7 +996,7 @@ Emits structured `logx' events categorized by subsystem."
          (tool (and tool-name (mcpkit--find-tool (format "%s" tool-name) mcpkit--active-services)))
          (has-name (and tool-name (not (string-empty-p (format "%s" tool-name))) (not (equal (format "%s" tool-name) "-"))))
          (is-rpc (or (not has-name)
-                     (member tool-name '("initialize" "tools/list"))
+                     (member tool-name '("initialize" "server/discover" "tools/list"))
                      (string-prefix-p "notifications/" (format "%s" (or tool-name "")))))
          (is-tool (and has-name (not is-rpc)))
          (tname (if has-name (format "%s" tool-name) "-"))

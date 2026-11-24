@@ -342,6 +342,24 @@ not recorded in the live session's statistics."
   (dolist (m '(orgx-mcp builder-elpaish hitl-plan-mcp))
     (should (memq m mcpkit-service-modules))))
 
+(ert-deftest mcpkit-test-server-discover ()
+  "server/discover answers with server info instead of method-not-found."
+  (mcpkit-test--with-clean-env
+    (let (status resp)
+      (mcpkit--handle-request-payload
+       "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"server/discover\"}"
+       mcpkit--active-services
+       (lambda (s r &rest _rest) (setq status s resp r)))
+      (should (eq status 'success))
+      (let ((result (plist-get resp :result)))
+        (should (equal (plist-get result :resultType) "complete"))
+        (should (equal (plist-get (plist-get result :serverInfo) :name) "mcpkit"))
+        (should (equal (plist-get (plist-get result :_meta)
+                                  :io.modelcontextprotocol/serverInfo)
+                       (plist-get result :serverInfo)))
+        (should (plist-get result :instructions))
+        (should-not (plist-member result :protocolVersion))))))
+
 ;;; Collision Handling Tests
 
 (ert-deftest mcpkit-test-collision-handling ()
