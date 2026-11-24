@@ -337,6 +337,11 @@ not recorded in the live session's statistics."
             (should-not (= (mcpkit-active-port) 8765)))
         (mcpkit-stop-all-services)))))
 
+(ert-deftest mcpkit-test-service-modules-cover-known-services ()
+  "Every first-party service module is loaded by default."
+  (dolist (m '(orgx-mcp builder-elpaish hitl-plan-mcp))
+    (should (memq m mcpkit-service-modules))))
+
 ;;; Collision Handling Tests
 
 (ert-deftest mcpkit-test-collision-handling ()
