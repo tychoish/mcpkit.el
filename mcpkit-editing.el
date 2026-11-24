@@ -80,10 +80,59 @@ returned unsliced."
                       total)))
       (string-join (seq-subseq lines (min start-idx total) end-idx) "\n"))))
 
+(defun mcpkit-editing--markdown-frontmatter-p ()
+  "Return non-nil when point is inside a markdown YAML front matter block."
+  (let ((pos (point)))
+    (save-excursion
+      (goto-char (point-min))
+      (and (looking-at-p "---[ \t]*$")
+           (progn (forward-line 1) t)
+           (re-search-forward "^\\(---\\|\\.\\.\\.\\)[ \t]*$" nil t)
+           (<= pos (match-end 0))))))
+
+(defun mcpkit-editing--yaml-folded-scalar-bounds ()
+  "Return (BEG END INDENT) of the YAML folded (`>') scalar body at point.
+Return nil when point is not on a non-blank line of such a body."
+  (save-excursion
+    (beginning-of-line)
+    (unless (looking-at-p "[ \t]*$")
+      (let ((indent (current-indentation))
+            (key-indent nil))
+        (while (and (not key-indent) (not (bobp)))
+          (forward-line -1)
+          (when (and (not (looking-at-p "[ \t]*$"))
+                     (< (current-indentation) indent))
+            (setq key-indent (current-indentation))))
+        (when (and key-indent
+                   (looking-at-p "[ \t]*\\(- +\\)?[^ \t:#][^:]*:[ \t]*>[-+0-9]*[ \t]*$"))
+          (forward-line 1)
+          (let ((beg (point)))
+            (while (and (not (eobp))
+                        (or (looking-at-p "[ \t]*$")
+                            (> (current-indentation) key-indent)))
+              (forward-line 1))
+            (list beg (point) indent)))))))
+
+(defun mcpkit-editing--fill-yaml-scalar (beg end indent)
+  "Fill each blank-line-separated paragraph between BEG and END at INDENT."
+  (let ((fill-prefix (make-string indent ?\s))
+        (end (copy-marker end)))
+    (goto-char beg)
+    (while (< (point) end)
+      (if (looking-at-p "[ \t]*$")
+          (forward-line 1)
+        (let ((para-beg (point)))
+          (while (and (< (point) end) (not (looking-at-p "[ \t]*$")))
+            (forward-line 1))
+          (fill-region-as-paragraph para-beg (point))
+          (goto-char (min (point) end)))))
+    (goto-char end)))
+
 (defun mcpkit-editing-fill-buffer (&optional column)
   "Fill every paragraph in the current buffer to COLUMN (default 72).
 Org and Markdown headings and preformatted blocks (source, example, export, fenced
-code) are left untouched.  Returns non-nil when the buffer changed."
+code) are left untouched, as is Markdown YAML front matter other than
+folded (`>') scalars.  Returns non-nil when the buffer changed."
   (let ((fill-column (or column 72))
         (before (buffer-hash)))
     (goto-char (point-min))
@@ -91,6 +140,11 @@ code) are left untouched.  Returns non-nil when the buffer changed."
       (cond
        ((looking-at-p "[ \t]*$")
         (forward-line 1))
+       ((and (derived-mode-p 'markdown-mode)
+             (mcpkit-editing--markdown-frontmatter-p))
+        (if-let* ((bounds (mcpkit-editing--yaml-folded-scalar-bounds)))
+            (apply #'mcpkit-editing--fill-yaml-scalar bounds)
+          (forward-line 1)))
        ((cond
          ((derived-mode-p 'org-mode)
           (memq (org-element-type (org-element-at-point))
